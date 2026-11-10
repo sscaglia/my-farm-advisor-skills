@@ -231,6 +231,65 @@ _CROP_LABELS = {
     "mixed": "mixed crop",
 }
 
+# Entre Ríos (Argentina) guidance.  Argentine management windows run on the
+# southern-hemisphere calendar (spring planting, autumn/winter wheat), and
+# Vertisol waterlogging plus humid-canopy disease are the dominant watchouts.
+# Used whenever a field's ``country`` is ``AR``; US latitude bands are
+# untouched for every other country.
+_ARGENTINA_GUIDANCE = {
+    "corn": CropRegionGuidance(
+        "Entre Ríos (Argentina)",
+        "Sep 10-Oct 20 (early) / Oct 1-Nov 5 (late)",
+        (
+            "spring waterlogging on Vertisols after heavy rainfall",
+            "summer hail and lodging risk around silking",
+        ),
+        selection_label="corn hybrid maturity",
+        selection_range="mid-to-full season tropical-temperate hybrid by planting date",
+    ),
+    "soybean": CropRegionGuidance(
+        "Entre Ríos (Argentina)",
+        "Nov 1-Dec 15",
+        (
+            "Sclerotinia and Cercospora pressure in humid summers",
+            "late planting after a wet spring compresses the reproductive window",
+        ),
+        selection_label="soybean maturity group",
+        selection_range="MG V-VII by planting date and soil depth",
+    ),
+    "wheat": CropRegionGuidance(
+        "Entre Ríos (Argentina)",
+        "Jun 1-Jul 20",
+        (
+            "leaf rust and Septoria pressure through heading",
+            "waterlogging at stem elongation on poorly drained map units",
+        ),
+        selection_label="wheat cycle",
+        selection_range="intermediate to long cycle bread wheat",
+    ),
+    "cotton": CropRegionGuidance(
+        "Entre Ríos (Argentina)",
+        "Oct 1-Nov 15 after warm-soil readiness",
+        (
+            "heat-unit completion in a short Chaco-adjacent season",
+            "boll-fill moisture stress and harvest-window rain",
+        ),
+        selection_label="cotton maturity",
+        selection_range="early to mid maturity where local trials support cotton",
+    ),
+    "sorghum": CropRegionGuidance(
+        "Entre Ríos (Argentina)",
+        "Oct 15-Nov 30",
+        (
+            "bird and head-insect pressure near harvest",
+            "grain mold risk in humid drydown windows",
+        ),
+        selection_label="sorghum hybrid maturity",
+        selection_range="medium grain or forage hybrid by market endpoint",
+    ),
+}
+_ARGENTINA_GUIDANCE["mixed"] = _ARGENTINA_GUIDANCE["corn"]
+
 _CROP_TABLES = {
     "corn": _CORN_GUIDANCE,
     "soybean": _SOY_GUIDANCE,
@@ -336,6 +395,16 @@ def _guidance_for_latitude(latitude: float, crop_focus: str) -> CropRegionGuidan
     return table[-1][1]
 
 
+def _is_argentina(country: Any) -> bool:
+    return str(country or "").strip().upper() == "AR"
+
+
+def _guidance_for(crop_focus: str, latitude: float, country: Any = None) -> CropRegionGuidance:
+    if _is_argentina(country):
+        return _ARGENTINA_GUIDANCE.get(crop_focus, _ARGENTINA_GUIDANCE["corn"])
+    return _guidance_for_latitude(latitude, crop_focus)
+
+
 def _average_column(field_df: pd.DataFrame, column: str) -> float | None:
     if column not in field_df.columns:
         return None
@@ -346,18 +415,38 @@ def _average_column(field_df: pd.DataFrame, column: str) -> float | None:
     return _safe_float(values.mean())
 
 
-def _selection_message(crop_focus: str, guidance: CropRegionGuidance, latitude: float) -> str:
+def _selection_message(
+    crop_focus: str, guidance: CropRegionGuidance, latitude: float, country: Any = None
+) -> str:
+    argentina = _is_argentina(country)
+    locale = "Entre Ríos" if argentina else "this latitude band"
     if crop_focus == "corn":
-        return f"For this latitude band, keep corn hybrid selection centered around RM {guidance.corn_rm_range}."
+        if argentina:
+            return (
+                f"For {locale}, keep corn hybrid selection centered around "
+                f"{guidance.selection_range or guidance.corn_rm_range}."
+            )
+        return f"For {locale}, keep corn hybrid selection centered around RM {guidance.corn_rm_range}."
     if crop_focus == "soybean":
-        return f"For this latitude band, keep soybean maturity selection centered around MG {guidance.soybean_mg_range}."
+        if argentina:
+            return (
+                f"For {locale}, keep soybean maturity selection centered around "
+                f"{guidance.selection_range or guidance.soybean_mg_range}."
+            )
+        return f"For {locale}, keep soybean maturity selection centered around MG {guidance.soybean_mg_range}."
     if crop_focus in {"wheat", "cotton", "sorghum"}:
         return (
-            f"For this latitude band, match {guidance.selection_label or crop_focus} "
+            f"For {locale}, match {guidance.selection_label or crop_focus} "
             f"to {guidance.selection_range or 'local extension trial fit'}."
         )
-    corn_guidance = _guidance_for_latitude(latitude, "corn")
-    soy_guidance = _guidance_for_latitude(latitude, "soybean")
+    corn_guidance = _guidance_for("corn", latitude, country)
+    soy_guidance = _guidance_for("soybean", latitude, country)
+    if argentina:
+        return (
+            "Rotation signals are mixed, so compare both "
+            f"corn {corn_guidance.selection_range or corn_guidance.corn_rm_range or 'regional'} and "
+            f"soybean {soy_guidance.selection_range or soy_guidance.soybean_mg_range or 'regional'} options before locking the 2026 plan."
+        )
     return (
         "Rotation signals are mixed, so compare both "
         f"corn RM {corn_guidance.corn_rm_range or 'regional'} and "
@@ -369,9 +458,10 @@ def generate_field_recommendations(
     field_row: dict[str, Any],
     *,
     centroid_lat: float,
+    country: str | None = None,
 ) -> dict[str, Any]:
     crop_focus = _crop_focus(field_row)
-    guidance = _guidance_for_latitude(centroid_lat, crop_focus)
+    guidance = _guidance_for(crop_focus, centroid_lat, country)
     action_plan: list[str] = []
     watchouts: list[str] = []
     optimize_for_success: list[str] = []
@@ -379,7 +469,7 @@ def generate_field_recommendations(
     action_plan.append(
         f"{guidance.label} planning window: target {guidance.planting_window} readiness for the 2026 season."
     )
-    action_plan.append(_selection_message(crop_focus, guidance, centroid_lat))
+    action_plan.append(_selection_message(crop_focus, guidance, centroid_lat, country))
 
     ph = _safe_float(field_row.get("avg_ph"))
     if ph is not None:
@@ -508,7 +598,7 @@ def generate_field_recommendations(
 
 
 def generate_farm_recommendations(
-    field_df: pd.DataFrame, *, farm_name: str
+    field_df: pd.DataFrame, *, farm_name: str, country: str | None = None
 ) -> dict[str, Any]:
     if field_df.empty:
         return {
@@ -554,6 +644,12 @@ def generate_farm_recommendations(
     if low_diversity_fields > 0:
         bullets.append(
             f"{low_diversity_fields} field(s) show low crop diversity, so disease carryover and herbicide-resistance watchlists deserve extra attention this season."
+        )
+    if _is_argentina(country):
+        bullets.append(
+            "Entre Ríos planning: anchor the rotation on full-season summer crops "
+            "(soybean/maize) with wheat as the winter option, and budget scouting for "
+            "Sclerotinia, Cercospora, and waterlogging after heavy spring rainfall."
         )
     bullets.append(
         "Use the 2026 crop resources to pre-assign scouting priorities by crop: disease pressure, planting-window execution, maturity fit, and reproductive-stage moisture risk."

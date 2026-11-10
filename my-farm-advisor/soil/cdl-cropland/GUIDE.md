@@ -347,3 +347,53 @@ to the AAFC **Annual Crop Inventory**, 30 m per-year crop class maps,
 - Verified on `demo-canada` (6 Ontario fields): five-year rotations resolve
   to realistic Corn/Soybean/Winter-wheat sequences (2023: 3 Corn, 2 Winter
   Wheat, 1 Soybeans).
+
+## Argentina — INTA National Map of Crops (MNC)
+
+Fields whose boundary carries `country == "AR"` route to the INTA **Mapa
+Nacional de Cultivos**, annual 30 m crop-type rasters covering Argentina,
+published on Zenodo under CC BY 4.0.
+
+- Campaigns 2020/21 through 2024/25 map to calendar years 2021-2025:
+  `MNC_ver25.tif` / `MNC_inv24.tif`, `MNC_verano-2024.tif` /
+  `MNC_invierno2023.tif`, and so on. Exact file names, Zenodo record IDs, and
+  MD5 checksums live in `src/mnc_reporting.py`.
+- Rasters download on first use to `shared/argentina/mnc/<year>/` and are
+  verified against the published MD5. Prefetch with
+  `download_cdl.py --mnc-raster-only --mnc-years 2021,2022,2023,2024,2025`.
+- **Season rule**: the summer raster is primary. The winter raster is
+  substituted only when the summer map is masked or non-agricultural for a
+  field (summer crop share below 20 %). Both seasonal compositions are kept
+  in `derived/summaries/mnc_seasonal_detail.csv` with a `selected` flag and
+  `selection_reason`.
+- Crop names are translated to CDL-compatible names (`Maíz` → `Corn`,
+  `Soja` → `Soybeans`, `Girasol` → `Sunflower`, ...) so rotation summaries,
+  stacked-bar charts, and strategy text work unchanged. The raw MNC code is
+  retained in `crop_code`.
+- Output rows carry `crop_source='mnc'` and `season` in addition to the CDL
+  schema.
+- Provenance is written to `derived/summaries/mnc_provenance.json`.
+
+## Crop-conditioned NDVI cards
+
+`data-pipeline/src/scripts/reporting/generate_ndvi_cards.py` masks NDVI
+scenes with the same crop map that produced the crop history, so the peak
+and cumulative cards are conditioned on real crop pixels:
+
+- **Source-aware crop masks**: US fields use the state-specific CDL raster
+  (`Corn=1`, `Soybeans=5`); AR fields use the MNC summer raster
+  (`Corn=10`, `Soybeans=11`). The mask path and crop codes travel together,
+  so MNC codes are never compared against CDL values.
+- **State resolution**: boundaries from CSB, GPKG, or OSM often carry a
+  `state` label but no `state_fips`. `lib/admin_regions.py` resolves the
+  label through the geoadmin states layer (with a static USPS fallback) and
+  `farm.json` supplies the farm-level state/country when a field omits them.
+  This prevents an Illinois farm from silently masking against the Iowa CDL.
+- **Hemisphere-aware peak windows**: northern corn/soybean use DOY 180-240 /
+  190-250; southern fields use 10-90 / 15-95 so an Entre Ríos peak card is
+  not built from a July-August window.
+- **Southern crop years**: AR campaigns run July-June, so scenes from July
+  onward are assigned to the following summer campaign before joining crop
+  history. The cumulative chart uses a Jul-Jun crop-year axis for southern
+  fields.
+

@@ -271,6 +271,8 @@ def ensure_canonical_data_tree(
     farm_name: str = DEFAULT_FARM_NAME,
     inventory_path: Path | None = None,
     include_farm: bool = True,
+    country: str | None = None,
+    state: str | None = None,
 ) -> list[str]:
     (DATA_ROOT / "shared" / "weather").mkdir(parents=True, exist_ok=True)
     (DATA_ROOT / "shared" / "geoadmin" / "l0_countries" / "raw").mkdir(
@@ -406,14 +408,25 @@ def ensure_canonical_data_tree(
     (farm / "derived" / "summaries").mkdir(parents=True, exist_ok=True)
     (farm / "derived" / "dashboards").mkdir(parents=True, exist_ok=True)
     (farm / "derived" / "tables").mkdir(parents=True, exist_ok=True)
+    farm_metadata_path = farm / "farm.json"
+    existing_metadata: dict[str, object] = {}
+    if farm_metadata_path.exists():
+        try:
+            existing_metadata = json.loads(farm_metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            existing_metadata = {}
+    # Country/state drive soil, crop-history, and strategy routing.  Never
+    # reset them to the US/IA placeholder once a real farm has recorded them.
+    resolved_country = (country or existing_metadata.get("country") or "US")
+    resolved_state = state or existing_metadata.get("state") or "IA"
     _write_json(
-        farm / "farm.json",
+        farm_metadata_path,
         {
             "grower_slug": grower_slug,
             "farm_slug": farm_slug,
-            "display_name": farm_name,
-            "state": "IA",
-            "country": "US",
+            "display_name": farm_name or existing_metadata.get("display_name"),
+            "state": str(resolved_state).strip(),
+            "country": str(resolved_country).strip().upper(),
             "default_crs": "EPSG:4326",
             "notes": "Canonical farm metadata",
         },

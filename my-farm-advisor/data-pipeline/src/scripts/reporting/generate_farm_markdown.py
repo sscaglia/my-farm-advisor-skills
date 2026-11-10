@@ -53,6 +53,7 @@ from pipeline import (
     load_manifest,
     step_is_stale,
 )
+from projection import utm_crs_for_geometry
 from reporting import (
     build_farm_reporting_dataset,
     build_field_reporting_dataset,
@@ -80,7 +81,18 @@ _CODE_PATHS = [
 
 
 def _utm(frow) -> str:
-    return "EPSG:32615" if frow.geometry.centroid.x < -90 else "EPSG:32616"
+    return utm_crs_for_geometry(frow.geometry)
+
+
+def _farm_country(fields: gpd.GeoDataFrame) -> str | None:
+    if "country" not in fields.columns:
+        return None
+    values = {
+        str(value).strip().upper()
+        for value in fields["country"].dropna().unique().tolist()
+        if str(value).strip()
+    }
+    return values.pop() if len(values) == 1 else None
 
 
 def _safe(val) -> str:
@@ -220,8 +232,9 @@ def main() -> None:
         cdl_summary=crop_sum,
     )
     farm_df = build_farm_reporting_dataset(field_df)
+    farm_country = _farm_country(fields)
     farm_strategy = generate_farm_recommendations(
-        field_df, farm_name=_DEFAULT_FARM_NAME
+        field_df, farm_name=_DEFAULT_FARM_NAME, country=farm_country
     )
 
     total_ac = float(farm_df.iloc[0].get("total_acres", 0))
@@ -350,6 +363,7 @@ def main() -> None:
         strategy = generate_field_recommendations(
             row_dict,
             centroid_lat=_field_centroid_latitude(fields, idx_num),
+            country=str(frow.get("country") or ""),
         )
         md_lines.append("**2026 Crop Strategy:**")
         md_lines.append(

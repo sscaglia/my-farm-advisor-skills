@@ -482,6 +482,10 @@ def _survey_label(ssurgo_gdf: gpd.GeoDataFrame) -> str:
             v = vals[0]
             if v == "usda-sda":
                 return "SSURGO"
+            if v == "inta_entre_rios_100k":
+                return "INTA Entre Ríos 1:100k"
+            if v == "ontario_detailed_soil_survey":
+                return "Ontario Detailed Soil Survey"
             return " ".join(w.capitalize() for w in v.replace("_", " ").replace("-", " ").split())
     return "SSURGO"
 

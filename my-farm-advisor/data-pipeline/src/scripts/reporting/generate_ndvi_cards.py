@@ -51,8 +51,10 @@ from pipeline import (  # noqa: E402
     load_manifest,
     step_is_stale,
 )  # pyright: ignore[reportMissingImports]
+from admin_regions import resolve_state_fips  # noqa: E402
 from paths import (  # noqa: E402
     farm_boundary_path,
+    farm_dir,
     field_dir,
     field_boundary_path,
     field_feature_path,
@@ -64,6 +66,9 @@ from paths import (  # noqa: E402
     shared_cdl_raster_dir,
 )  # pyright: ignore[reportMissingImports]
 from satellite_imagery import write_single_band_raster  # noqa: E402
+
+ensure_skill_path("cdl-cropland")
+from mnc_reporting import MNC_CAMPAIGNS, mnc_raster_path  # noqa: E402  # pyright: ignore[reportMissingImports]
 
 _SCRIPT = Path(__file__)
 _CROP_CARD_SPECS = {
@@ -82,18 +87,40 @@ _PEAK_CARD_SPECS = {
     "corn_peak_95": {
         "label": "Corn 95th %ile peak NDVI",
         "crop_name": "Corn",
-        "crop_code": 1,
-        "doy_window": (180, 240),
         "output_png": "ndvi_corn_peak_95.png",
         "output_tif": "ndvi_corn_peak_95.tif",
     },
     "soybean_peak_95": {
         "label": "Soybean 95th %ile peak NDVI",
         "crop_name": "Soybeans",
-        "crop_code": 5,
-        "doy_window": (190, 250),
         "output_png": "ndvi_soybean_peak_95.png",
         "output_tif": "ndvi_soybean_peak_95.tif",
+    },
+}
+
+# Peak windows move with the hemisphere.  Argentina summer crops peak in
+# January-March (DOY 10-90), not during the northern July-August window.
+_PEAK_DOY_WINDOWS = {
+    "north": {
+        "corn_peak_95": (180, 240),
+        "soybean_peak_95": (190, 250),
+    },
+    "south": {
+        "corn_peak_95": (10, 90),
+        "soybean_peak_95": (15, 95),
+    },
+}
+
+# Crop-mask rasters and their class codes.  MNC reuses different integer codes
+# than CDL, so the code must travel with the raster instead of being hard-coded.
+_CROP_MASK_PROFILES: dict[str, dict[str, Any]] = {
+    "US": {
+        "label": "CDL",
+        "codes": {"Corn": 1, "Soybeans": 5},
+    },
+    "AR": {
+        "label": "MNC summer",
+        "codes": {"Corn": 10, "Soybeans": 11},
     },
 }
 
@@ -161,31 +188,117 @@ def _read_resampled_like(
     return destination
 
 
-def _shared_cdl_raster_path(year: int, state_fips: str = "19") -> Path:
+def _shared_cdl_raster_path(year: int, state_fips: str) -> Path:
     state_path = shared_cdl_raster_dir() / f"CDL_{year}_{state_fips}.tif"
     if state_path.exists():
         return state_path
     return shared_cdl_conus_raster_path(year)
 
 
-def _field_state_fips_lookup() -> dict[str, str]:
-    boundary_path = farm_boundary_path(_DEFAULT_GROWER, _DEFAULT_FARM)
-    if not boundary_path.exists():
+def _farm_metadata() -> dict[str, Any]:
+    path = farm_dir(_DEFAULT_GROWER, _DEFAULT_FARM) / "farm.json"
+    if not path.exists():
         return {}
-    fields = gpd.read_file(boundary_path)
-    if "field_id" not in fields.columns or "state_fips" not in fields.columns:
+    try:
+        return _load_json(path)
+    except (OSError, json.JSONDecodeError):
         return {}
-    lookup: dict[str, str] = {}
-    for _, row in fields[["field_id", "state_fips"]].dropna().iterrows():
-        state_fips = str(row["state_fips"]).strip()
+
+
+def _clean_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none"}:
+        return None
+    return text
+
+
+def _field_admin_context(row: Any, farm_meta: dict[str, Any]) -> dict[str, Any]:
+    country = (
+        _clean_text(row.get("country"))
+        or _clean_text(farm_meta.get("country"))
+        or ""
+    ).upper()
+    state = _clean_text(row.get("state")) or _clean_text(farm_meta.get("state"))
+    raw_fips = row.get("state_fips")
+    state_fips = (
+        str(raw_fips).strip().zfill(2)
+        if raw_fips is not None and str(raw_fips).strip()
+        else resolve_state_fips(state)
+    )
+    return {
+        "country": country,
+        "state": None if state is None else str(state),
+        "state_fips": state_fips,
+    }
+
+
+def _crop_mask_year(scene_date: pd.Timestamp, *, southern: bool) -> int:
+    """Return the campaign/crop year a scene belongs to.
+
+    Northern hemisphere scenes map to their calendar year.  Southern
+    hemisphere campaigns run July-June, so a November scene belongs to the
+    following summer campaign.
+    """
+
+    if southern and int(scene_date.month) >= 7:
+        return int(scene_date.year) + 1
+    return int(scene_date.year)
+
+
+def _crop_mask_spec(
+    year: int, *, country: str, state_fips: str | None
+) -> dict[str, Any] | None:
+    """Return the crop-mask raster and crop codes for one year, if available."""
+
+    profile = _CROP_MASK_PROFILES.get(country)
+    if profile is None:
+        return None
+    if country == "US":
         if not state_fips:
-            continue
-        lookup[str(row["field_id"])] = state_fips.zfill(2)
-    return lookup
+            return None
+        raster = _shared_cdl_raster_path(year, state_fips)
+    elif country == "AR":
+        if year not in MNC_CAMPAIGNS:
+            return None
+        raster = mnc_raster_path(year, "summer")
+    else:  # pragma: no cover - guarded by the profile lookup
+        return None
+    if not raster.exists():
+        return None
+    return {
+        "raster": raster,
+        "codes": dict(profile["codes"]),
+        "label": str(profile["label"]),
+    }
+
+
+def _peak_specs_for_field(
+    *, country: str, southern: bool
+) -> dict[str, dict[str, Any]]:
+    windows = _PEAK_DOY_WINDOWS["south" if southern else "north"]
+    profile = _CROP_MASK_PROFILES.get(country, {})
+    codes = profile.get("codes", {})
+    specs: dict[str, dict[str, Any]] = {}
+    for key, base in _PEAK_CARD_SPECS.items():
+        specs[key] = {
+            **base,
+            "doy_window": windows[key],
+            "crop_code": codes.get(str(base["crop_name"])),
+            "crop_mask_label": str(profile.get("label", "crop mask")),
+        }
+    return specs
 
 
 def _collect_peak_scene_rows(
-    field_slug: str, *, crop_code: int, doy_window: tuple[int, int], state_fips: str
+    field_slug: str,
+    *,
+    crop_name: str,
+    doy_window: tuple[int, int],
+    country: str,
+    state_fips: str | None,
+    southern: bool,
 ) -> list[dict[str, Any]]:
     start_doy, end_doy = doy_window
     rows: list[dict[str, Any]] = []
@@ -198,17 +311,20 @@ def _collect_peak_scene_rows(
             year = year_entry.get("year")
             if year is None:
                 continue
-            cdl_raster = _shared_cdl_raster_path(int(year), state_fips=state_fips)
-            if not cdl_raster.exists():
-                continue
             for scene in year_entry.get("scenes", []):
                 ndvi_tif = scene.get("ndvi_tif")
                 scene_date_raw = scene.get("scene_date")
                 if not ndvi_tif or not scene_date_raw:
                     continue
                 scene_date = pd.Timestamp(scene_date_raw)
-                doy = int(scene_date.dayofyear)
+                doy = int(scene_date.day_of_year)
                 if doy < start_doy or doy > end_doy:
+                    continue
+                crop_year = _crop_mask_year(scene_date, southern=southern)
+                mask_spec = _crop_mask_spec(
+                    crop_year, country=country, state_fips=state_fips
+                )
+                if mask_spec is None or crop_name not in mask_spec["codes"]:
                     continue
                 ndvi_path = _REPO / str(ndvi_tif)
                 if not ndvi_path.exists():
@@ -218,8 +334,10 @@ def _collect_peak_scene_rows(
                         "sensor": sensor,
                         "scene_date": scene_date,
                         "year": int(year),
-                        "crop_code": crop_code,
-                        "cdl_raster": cdl_raster,
+                        "crop_year": crop_year,
+                        "crop_code": int(mask_spec["codes"][crop_name]),
+                        "crop_mask_raster": Path(mask_spec["raster"]),
+                        "crop_mask_source": str(mask_spec["label"]),
                         "ndvi_path": ndvi_path,
                     }
                 )
@@ -248,11 +366,13 @@ def _compute_peak_percentile_array(
         ndvi_array = _read_resampled_like(
             ndvi_path, reference_path, resampling=Resampling.bilinear
         )
-        cdl_array = _read_resampled_like(
-            Path(row["cdl_raster"]), reference_path, resampling=Resampling.nearest
+        mask_array = _read_resampled_like(
+            Path(row["crop_mask_raster"]),
+            reference_path,
+            resampling=Resampling.nearest,
         )
-        crop_mask = np.isfinite(cdl_array) & (
-            np.rint(cdl_array).astype("int32") == crop_code
+        crop_mask = np.isfinite(mask_array) & (
+            np.rint(mask_array).astype("int32") == crop_code
         )
         masked = np.where(
             crop_mask & np.isfinite(ndvi_array), ndvi_array, np.nan
@@ -286,7 +406,12 @@ def _compute_peak_percentile_array(
 
 
 def _placeholder_card(
-    output_path: Path, title: str, message: str, detail: str | None = None
+    output_path: Path,
+    title: str,
+    message: str,
+    detail: str | None = None,
+    *,
+    headline: str = "NDVI card unavailable",
 ) -> None:
     fig, ax = plt.subplots(figsize=(8, 5))
     fig.patch.set_facecolor("#fafaf9")
@@ -303,7 +428,7 @@ def _placeholder_card(
     ax.text(
         0.5,
         0.60,
-        "NDVI card unavailable",
+        headline,
         ha="center",
         va="center",
         fontsize=15,
@@ -350,11 +475,17 @@ def _render_raster_card(
     value_range: tuple[float, float] | None,
     fallback_message: str,
     *,
+    placeholder_headline: str = "NDVI card unavailable",
     vmin: float = -0.2,
     vmax: float = 1.0,
 ) -> bool:
     if array is None or mean_ndvi is None or value_range is None:
-        _placeholder_card(output_path, title, fallback_message)
+        _placeholder_card(
+            output_path,
+            title,
+            fallback_message,
+            headline=placeholder_headline,
+        )
         return False
 
     fig = plt.figure(figsize=(8, 5))
@@ -435,7 +566,12 @@ def _select_current_season_scenes(
 
 
 def _collect_all_season_scene_rows(
-    field_slug: str, boundary_path: Path, *, state_fips: str
+    field_slug: str,
+    boundary_path: Path,
+    *,
+    country: str,
+    state_fips: str | None,
+    southern: bool,
 ) -> list[dict[str, Any]]:
     all_rows: list[dict[str, Any]] = []
 
@@ -449,13 +585,17 @@ def _collect_all_season_scene_rows(
             if year is None:
                 continue
             year_int = int(year)
-            cdl_raster = _shared_cdl_raster_path(year_int, state_fips=state_fips)
-            if not cdl_raster.exists():
-                continue
             for scene in year_entry.get("scenes", []):
                 ndvi_tif = scene.get("ndvi_tif")
                 scene_date_raw = scene.get("scene_date")
                 if not ndvi_tif or not scene_date_raw:
+                    continue
+                scene_date = pd.Timestamp(scene_date_raw)
+                crop_year = _crop_mask_year(scene_date, southern=southern)
+                mask_spec = _crop_mask_spec(
+                    crop_year, country=country, state_fips=state_fips
+                )
+                if mask_spec is None:
                     continue
                 ndvi_path = _REPO / str(ndvi_tif)
                 if not ndvi_path.exists() or not boundary_path.exists():
@@ -463,11 +603,14 @@ def _collect_all_season_scene_rows(
                 all_rows.append(
                     {
                         "sensor": sensor,
-                        "scene_date": pd.Timestamp(scene_date_raw),
+                        "scene_date": scene_date,
                         "cloud_cover": float(scene.get("cloud_cover") or 999.0),
                         "ndvi_path": ndvi_path,
-                        "cdl_raster": cdl_raster,
-                        "month": pd.Timestamp(scene_date_raw).month,
+                        "crop_mask_raster": Path(mask_spec["raster"]),
+                        "crop_mask_source": str(mask_spec["label"]),
+                        "crop_codes": dict(mask_spec["codes"]),
+                        "crop_year": crop_year,
+                        "month": scene_date.month,
                         "year": year_int,
                     }
                 )
@@ -475,7 +618,7 @@ def _collect_all_season_scene_rows(
 
 
 def _scene_metric_summary(
-    ndvi_path: Path, cdl_raster: Path, boundary_path: Path, crop_code: int
+    ndvi_path: Path, crop_mask_raster: Path, boundary_path: Path, crop_code: int
 ) -> dict[str, float] | None:
     boundary = gpd.read_file(boundary_path)
     with rasterio.open(ndvi_path) as src:
@@ -487,14 +630,14 @@ def _scene_metric_summary(
             invert=True,
             out_shape=(src.height, src.width),
         )
-    cdl_array = _read_resampled_like(
-        cdl_raster, ndvi_path, resampling=Resampling.nearest
+    mask_array = _read_resampled_like(
+        crop_mask_raster, ndvi_path, resampling=Resampling.nearest
     )
     valid_mask = (
         field_mask
         & np.isfinite(ndvi_array)
-        & np.isfinite(cdl_array)
-        & (np.rint(cdl_array).astype("int32") == crop_code)
+        & np.isfinite(mask_array)
+        & (np.rint(mask_array).astype("int32") == crop_code)
     )
     values = ndvi_array[valid_mask]
     if values.size == 0:
@@ -523,6 +666,8 @@ def _render_current_cumulative_card(
     scene_rows: list[dict[str, Any]],
     join_df: pd.DataFrame,
     boundary_path: Path,
+    *,
+    southern: bool,
 ) -> tuple[bool, str | None, dict[str, list[int]]]:
     if not scene_rows:
         _placeholder_card(
@@ -534,6 +679,8 @@ def _render_current_cumulative_card(
         return False, "no cumulative scenes", {}
 
     frame = pd.DataFrame(scene_rows)
+    if "crop_year" not in frame.columns:
+        frame["crop_year"] = frame["year"]
     crop_lookup = (
         {
             int(row["year"]): str(row["crop_name"])
@@ -542,7 +689,9 @@ def _render_current_cumulative_card(
         if {"year", "crop_name"}.issubset(join_df.columns)
         else {}
     )
-    frame["crop_name"] = [crop_lookup.get(int(year)) for year in frame["year"].tolist()]
+    frame["crop_name"] = [
+        crop_lookup.get(int(crop_year)) for crop_year in frame["crop_year"].tolist()
+    ]
     frame = frame[frame["crop_name"].isin(["Corn", "Soybeans"])].copy()
     if frame.empty:
         _placeholder_card(
@@ -553,18 +702,17 @@ def _render_current_cumulative_card(
         )
         return False, "no corn/soybean crop-year joins", {}
 
-    crop_code_lookup = {"Corn": 1, "Soybeans": 5}
     metric_rows: list[dict[str, Any]] = []
     for _, row in frame.iterrows():
         crop_name = str(row["crop_name"])
-        crop_code = crop_code_lookup.get(crop_name)
+        crop_code = dict(row.get("crop_codes") or {}).get(crop_name)
         if crop_code is None:
             continue
         metrics = _scene_metric_summary(
             Path(cast(Any, row["ndvi_path"])),
-            Path(cast(Any, row["cdl_raster"])),
+            Path(cast(Any, row["crop_mask_raster"])),
             boundary_path=boundary_path,
-            crop_code=crop_code,
+            crop_code=int(crop_code),
         )
         if metrics is None:
             continue
@@ -581,15 +729,25 @@ def _render_current_cumulative_card(
             output_path,
             "Cumulative NDVI by crop and year",
             "No crop-masked NDVI pixels were available for cumulative chart metrics.",
-            detail="The chart will populate after crop-conditioned NDVI scenes and CDL rasters overlap.",
+            detail="The chart will populate after crop-conditioned NDVI scenes and crop-mask rasters overlap.",
         )
         return False, "no crop-masked NDVI pixels", {}
 
-    frame = frame.sort_values(by=["crop_name", "year", "scene_date"]).copy()
-    frame["day_of_year"] = frame["scene_date"].dt.dayofyear
+    frame = frame.sort_values(by=["crop_name", "crop_year", "scene_date"]).copy()
+    if southern:
+        campaign_start = pd.to_datetime(
+            frame["crop_year"].sub(1).astype(int).astype(str) + "-07-01"
+        )
+        frame["crop_day"] = (frame["scene_date"] - campaign_start).dt.days + 1
+        x_col = "crop_day"
+        x_label = "Day of crop year (Jul-Jun)"
+    else:
+        frame["crop_day"] = frame["scene_date"].dt.day_of_year
+        x_col = "crop_day"
+        x_label = "Day of year"
     year_groups: list[pd.DataFrame] = []
     crop_years: dict[str, list[int]] = {"Corn": [], "Soybeans": []}
-    for key, group in frame.groupby(["crop_name", "year"], sort=True):
+    for key, group in frame.groupby(["crop_name", "crop_year"], sort=True):
         crop_name = str(cast(tuple[object, object], key)[0])
         year = int(cast(tuple[object, object], key)[1])
         ordered = group.sort_values("scene_date").copy()
@@ -633,8 +791,8 @@ def _render_current_cumulative_card(
     palette = ["#0f766e", "#2563eb", "#ea580c", "#7c3aed", "#ca8a04"]
     populated_groups = [group for group in year_groups if not group.empty]
     if populated_groups:
-        x_min = min(int(group["day_of_year"].min()) for group in populated_groups)
-        x_max = max(int(group["day_of_year"].max()) for group in populated_groups)
+        x_min = min(int(group[x_col].min()) for group in populated_groups)
+        x_max = max(int(group[x_col].max()) for group in populated_groups)
         y_max = max(float(group["p95_cumulative"].max()) for group in populated_groups)
     else:
         x_min, x_max, y_max = 1, 366, 1.0
@@ -646,7 +804,7 @@ def _render_current_cumulative_card(
         ]
         ax.set_facecolor("#ffffff")
         ax.grid(True, alpha=0.25)
-        ax.set_xlabel("Day of year", fontsize=10)
+        ax.set_xlabel(x_label, fontsize=10)
         ax.set_ylabel("Cumulative NDVI", fontsize=10)
         ax.set_title(crop_name, fontsize=12.5, fontweight="bold", loc="left")
         ax.tick_params(axis="both", labelsize=9)
@@ -665,10 +823,10 @@ def _render_current_cumulative_card(
             )
             continue
         for idx, group in enumerate(crop_groups):
-            year = int(group["year"].iloc[0])
+            year = int(group["crop_year"].iloc[0])
             color = palette[idx % len(palette)]
             ax.plot(
-                group["day_of_year"],
+                group[x_col],
                 group["mean_cumulative"],
                 linewidth=2.1,
                 marker="o",
@@ -677,7 +835,7 @@ def _render_current_cumulative_card(
                 label=str(year),
             )
             ax.fill_between(
-                group["day_of_year"],
+                group[x_col],
                 group["p05_cumulative"],
                 group["p95_cumulative"],
                 color=color,
@@ -771,16 +929,24 @@ def main() -> None:
     )
     force = os.environ.get("AG_FORCE") == "1"
     fields = gpd.read_file(_REPO / config.field_boundary_path)
+    fields_wgs84 = fields.to_crs(4326)
     field_slugs = _field_slug_lookup()
-    field_state_fips = _field_state_fips_lookup()
+    farm_meta = _farm_metadata()
 
-    for _, field in fields.iterrows():
+    for index, field in fields.iterrows():
         field_id = str(field["field_id"])
         field_slug = field_slugs.get(field_id)
         if not field_slug:
             print(f"skip  {field_id} (no field slug)")
             continue
-        state_fips = field_state_fips.get(field_id, "19")
+        context = _field_admin_context(field, farm_meta)
+        country = str(context["country"])
+        state_fips = context["state_fips"]
+        southern = bool(fields_wgs84.geometry.loc[index].centroid.y < 0)
+        mask_supported = country in _CROP_MASK_PROFILES and (
+            country != "US" or bool(state_fips)
+        )
+        peak_specs = _peak_specs_for_field(country=country, southern=southern)
 
         manifest_dir = field_manifest_dir(_DEFAULT_GROWER, _DEFAULT_FARM, field_slug)
         boundary_path = field_boundary_path(_DEFAULT_GROWER, _DEFAULT_FARM, field_slug)
@@ -799,18 +965,24 @@ def main() -> None:
             if rollup_path.exists():
                 input_paths.append(rollup_path)
         peak_scene_rows_by_key: dict[str, list[dict[str, Any]]] = {}
-        for peak_key, spec in _PEAK_CARD_SPECS.items():
+        for peak_key, spec in peak_specs.items():
             scene_rows = _collect_peak_scene_rows(
                 field_slug,
-                crop_code=int(spec["crop_code"]),
+                crop_name=str(spec["crop_name"]),
                 doy_window=cast(tuple[int, int], spec["doy_window"]),
+                country=country,
                 state_fips=state_fips,
+                southern=southern,
             )
             peak_scene_rows_by_key[peak_key] = scene_rows
             input_paths.extend(Path(row["ndvi_path"]) for row in scene_rows)
-            input_paths.extend(Path(row["cdl_raster"]) for row in scene_rows)
+            input_paths.extend(Path(row["crop_mask_raster"]) for row in scene_rows)
         seasonal_scene_rows = _collect_all_season_scene_rows(
-            field_slug, boundary_path, state_fips=state_fips
+            field_slug,
+            boundary_path,
+            country=country,
+            state_fips=state_fips,
+            southern=southern,
         )
         selected_scene_rows = _select_monthly_scene_rows(seasonal_scene_rows)
         input_paths.extend(_sensor_manifest_paths(field_slug))
@@ -834,6 +1006,10 @@ def main() -> None:
         summary_payload: dict[str, Any] = {
             "field_id": field_id,
             "field_slug": field_slug,
+            "country": country or None,
+            "state": context["state"],
+            "state_fips": state_fips,
+            "hemisphere": "south" if southern else "north",
             "cards": {},
         }
 
@@ -874,6 +1050,19 @@ def main() -> None:
                 f"Source raster: {rollup_path.name if rollup_path.exists() else 'not available'}"
             )
 
+            if crop_years:
+                fallback_message = (
+                    f"This field does not yet have a usable {crop_name.lower()} NDVI rollup in the "
+                    "canonical cache."
+                )
+                placeholder_headline = "NDVI card unavailable"
+            else:
+                fallback_message = (
+                    f"No {crop_name.lower()} crop years fall inside the available crop history "
+                    "window, so a crop-conditioned average is not applicable to this field."
+                )
+                placeholder_headline = "Not applicable for this field"
+
             rendered = _render_raster_card(
                 outputs[card_key],
                 str(spec["label"]),
@@ -881,10 +1070,8 @@ def main() -> None:
                 array,
                 mean_ndvi,
                 value_range,
-                fallback_message=(
-                    f"This field does not yet have a usable {crop_name.lower()} NDVI rollup in the "
-                    "canonical cache."
-                ),
+                fallback_message=fallback_message,
+                placeholder_headline=placeholder_headline,
             )
             summary_payload["cards"][card_key] = {
                 "status": "available" if rendered else "unavailable",
@@ -900,7 +1087,7 @@ def main() -> None:
                 "mean_ndvi": mean_ndvi,
             }
 
-        for peak_key, spec in _PEAK_CARD_SPECS.items():
+        for peak_key, spec in peak_specs.items():
             peak_array = None
             peak_mean = None
             peak_range = None
@@ -914,6 +1101,12 @@ def main() -> None:
                 )
                 if peak_array is None:
                     reason = "peak-window scenes were available but no matching crop pixels overlapped valid NDVI"
+            elif not mask_supported:
+                reason = (
+                    f"no crop-mask source is configured for country {country or 'unknown'}"
+                    if country
+                    else "the field has no country metadata"
+                )
             else:
                 reason = "no peak-window scenes were available for this crop"
 
@@ -927,9 +1120,16 @@ def main() -> None:
                     f"Scenes used: {len(used_rows)}"
                 ),
                 (
-                    f"Years included: {', '.join(str(int(row['year'])) for row in used_rows) if used_rows else 'none'}"
+                    "Years included: "
+                    + (
+                        ", ".join(
+                            str(year) for year in sorted({int(row["year"]) for row in used_rows})
+                        )
+                        if used_rows
+                        else "none"
+                    )
                 ),
-                "Per-pixel 95th percentile across peak-window NDVI scenes clipped to matching CDL crop pixels",
+                f"Per-pixel 95th percentile across peak-window NDVI scenes clipped to matching {spec['crop_mask_label']} crop pixels",
             ]
 
             rendered = _render_raster_card(
@@ -952,6 +1152,8 @@ def main() -> None:
                 "doy_window": list(cast(tuple[int, int], spec["doy_window"])),
                 "scene_count": len(used_rows),
                 "years": sorted({int(row["year"]) for row in used_rows}),
+                "crop_years": sorted({int(row["crop_year"]) for row in used_rows}),
+                "crop_mask_source": spec["crop_mask_label"],
                 "sources": sorted({str(row["sensor"]) for row in used_rows}),
                 "output_png": str(outputs[peak_key].relative_to(_REPO)),
                 "output_tif": str(tif_output.relative_to(_REPO))
@@ -966,6 +1168,7 @@ def main() -> None:
             selected_scene_rows,
             join_df,
             boundary_path,
+            southern=southern,
         )
         summary_payload["cards"]["current_season_cumulative"] = {
             "status": "available" if rendered_current else "unavailable",

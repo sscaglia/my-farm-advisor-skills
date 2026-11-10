@@ -66,6 +66,7 @@ from pipeline import (
     load_manifest,
     step_is_stale,
 )
+from projection import utm_crs_for_geometry, utm_epsg
 from reporting import (
     build_farm_reporting_dataset,
     build_field_reporting_dataset,
@@ -98,7 +99,27 @@ _CODE_PATHS = [
 
 
 def _utm(frow) -> str:
-    return "EPSG:32615" if frow.geometry.centroid.x < -90 else "EPSG:32616"
+    return utm_crs_for_geometry(frow.geometry)
+
+
+def _farm_country(fields: gpd.GeoDataFrame) -> str | None:
+    if "country" not in fields.columns:
+        return None
+    values = {
+        str(value).strip().upper()
+        for value in fields["country"].dropna().unique().tolist()
+        if str(value).strip()
+    }
+    return values.pop() if len(values) == 1 else None
+
+
+def _soil_label(row_dict: dict) -> str:
+    source = str(row_dict.get("soil_source") or "").strip()
+    if source == "inta_entre_rios_100k":
+        return "INTA Entre Ríos 1:100k"
+    if source == "ontario_detailed_soil_survey":
+        return "Ontario Detailed Soil Survey"
+    return "SSURGO"
 
 
 def _fig_to_b64(fig) -> str:
@@ -142,7 +163,10 @@ def _farm_map_b64(fields: gpd.GeoDataFrame) -> str:
     mean_longitude = float(
         (fields_wgs84.total_bounds[0] + fields_wgs84.total_bounds[2]) / 2
     )
-    centroid_crs = "EPSG:32615" if mean_longitude < -90 else "EPSG:32616"
+    mean_latitude = float(
+        (fields_wgs84.total_bounds[1] + fields_wgs84.total_bounds[3]) / 2
+    )
+    centroid_crs = utm_epsg(mean_longitude, mean_latitude)
     centroids_projected = fields.to_crs(centroid_crs).geometry.centroid
 
     def _overlay_geoadmin(target_ax, use_webmercator: bool) -> None:
@@ -546,8 +570,9 @@ def _field_card(
 
     soil_section = ""
     if soil_thumbs:
+        soil_label = _soil_label(row_dict)
         soil_section = f"""
-  <details open><summary><strong>SSURGO soil cards and maps (click thumbnails to enlarge)</strong></summary>
+  <details open><summary><strong>{soil_label} soil cards and maps (click thumbnails to enlarge)</strong></summary>
     <div class="soil-gallery">
       {"".join(soil_thumbs)}
     </div>
@@ -717,8 +742,9 @@ def main() -> None:
         cdl_summary=crop_sum,
     )
     farm_df = build_farm_reporting_dataset(field_df)
+    farm_country = _farm_country(fields)
     farm_strategy = generate_farm_recommendations(
-        field_df, farm_name=_DEFAULT_FARM_NAME
+        field_df, farm_name=_DEFAULT_FARM_NAME, country=farm_country
     )
 
     total_ac = float(farm_df.iloc[0].get("total_acres", 0))
@@ -762,6 +788,7 @@ def main() -> None:
         strategy = generate_field_recommendations(
             df_row.to_dict() if hasattr(df_row, "to_dict") else dict(df_row),
             centroid_lat=_field_centroid_latitude(fields, idx_num),
+            country=str(frow.get("country") or ""),
         )
         field_cards.append(
             _field_card(

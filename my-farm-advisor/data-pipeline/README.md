@@ -17,6 +17,31 @@ runtime artifacts stay outside the repo under `DATA_PIPELINE_DATA_ROOT`
 (see `ASSET_POLICY.md` at the repo root).
 
 
+## Grower web maps
+
+Generate standalone Field Atlas maps from the runtime field boundaries — one
+HTML map per grower plus an optional combined map that switches between growers
+and fields:
+
+```bash
+export DATA_PIPELINE_DATA_ROOT=/absolute/path/to/my-farm-advisor-runtime
+cd "${DATA_PIPELINE_DATA_ROOT}/data-pipeline/src"
+"${DATA_PIPELINE_DATA_ROOT}/data-pipeline/.venv/bin/python" \
+  scripts/reporting/generate_grower_web_map.py --all-growers --combined
+```
+
+Outputs stay under `${DATA_PIPELINE_DATA_ROOT}/data-pipeline/growers/`:
+
+- `growers/<grower>/reports/<grower>_field_map.html`
+- `growers/growers_field_map.html`
+- `growers/growers_field_map.json`
+
+The maps use Esri World Imagery with a streets toggle, embed only slim field
+geometry, and support grower/field hash links. See
+[`grower-web-map/README.md`](grower-web-map/README.md) and
+[`grower-web-map/GUIDE.md`](grower-web-map/GUIDE.md).
+
+
 ## Global parity in one paragraph
 
 Any field, any country, **zero accounts**: boundaries from CSB (US) or

@@ -66,6 +66,18 @@ def grower_manifest_path(grower_slug: str, filename: str = "pipeline_schedule.js
     return grower_manifest_dir(grower_slug) / filename
 
 
+def grower_reports_dir(grower_slug: str) -> Path:
+    return grower_dir(grower_slug) / "reports"
+
+
+def grower_report_path(grower_slug: str, filename: str) -> Path:
+    return grower_reports_dir(grower_slug) / filename
+
+
+def growers_overview_path(filename: str = "growers_field_map.html") -> Path:
+    return ensure_data_root_path(GROWERS_ROOT / filename)
+
+
 def grower_logs_dir(grower_slug: str) -> Path:
     return grower_dir(grower_slug) / "logs"
 
@@ -188,6 +200,10 @@ def farm_soil_sample_path(grower_slug: str, farm_slug: str) -> Path:
 
 def farm_soil_polygons_ontario_path(grower_slug: str, farm_slug: str) -> Path:
     return farm_table_path(grower_slug, farm_slug, "soil_polygons_ontario.gpkg")
+
+
+def farm_soil_polygons_argentina_path(grower_slug: str, farm_slug: str) -> Path:
+    return farm_table_path(grower_slug, farm_slug, "soil_polygons_argentina.gpkg")
 
 
 def farm_report_asset_path(grower_slug: str, farm_slug: str, extension: str) -> Path:
@@ -357,6 +373,26 @@ def shared_dem_dir() -> Path:
 
 def shared_soil_ontario_dir() -> Path:
     return SHARED_ROOT / "soil_ontario"
+
+
+def shared_argentina_dir() -> Path:
+    return SHARED_ROOT / "argentina"
+
+
+def shared_inta_dir() -> Path:
+    return shared_argentina_dir() / "inta"
+
+
+def shared_mnc_dir() -> Path:
+    return shared_argentina_dir() / "mnc"
+
+
+def shared_mnc_campaign_dir(year: int) -> Path:
+    return ensure_data_root_path(shared_mnc_dir() / str(int(year)))
+
+
+def farm_mnc_seasonal_detail_path(grower_slug: str, farm_slug: str) -> Path:
+    return farm_summaries_dir(grower_slug, farm_slug) / "mnc_seasonal_detail.csv"
 
 
 def shared_soilgrids_dir() -> Path:
