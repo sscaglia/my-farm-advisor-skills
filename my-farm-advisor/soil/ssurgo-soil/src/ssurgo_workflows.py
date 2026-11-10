@@ -17,6 +17,15 @@ try:
 except ImportError:
     from ssurgo_soil import download_soil
 
+try:
+    from projection import utm_crs_for_geometry
+except ImportError:  # pragma: no cover - direct skill use without pipeline lib
+    def utm_crs_for_geometry(geometry):  # type: ignore[misc]
+        centroid = geometry.centroid
+        zone = min(60, max(1, int((float(centroid.x) + 180.0) // 6.0) + 1))
+        base = 32600 if float(centroid.y) >= 0.0 else 32700
+        return f"EPSG:{base + zone}"
+
 
 SDA_URL = "https://sdmdataaccess.sc.egov.usda.gov/Tabular/post.rest"
 
@@ -200,9 +209,7 @@ def prepare_ssurgo_field_package(
     agg = aggregate_soil_rows_by_mukey(field_soil)
     dissolved = dissolved.merge(agg, on="mukey", how="left")
 
-    utm = dissolved.to_crs(
-        "EPSG:32615" if field_wgs84.geometry.iloc[0].centroid.x < -90 else "EPSG:32616"
-    )
+    utm = dissolved.to_crs(utm_crs_for_geometry(field_wgs84.geometry.iloc[0]))
     dissolved["area_acres"] = utm.geometry.area * 0.000247105
 
     detail = field_soil.copy()
@@ -585,7 +592,7 @@ def render_complete_workflow_figure(
     output_path: str | Path,
     combine_width_m: float = 9.0,
 ) -> None:
-    utm_crs = "EPSG:32615" if field_wgs84.geometry.iloc[0].centroid.x < -90 else "EPSG:32616"
+    utm_crs = utm_crs_for_geometry(field_wgs84.geometry.iloc[0])
     field_utm = field_wgs84.to_crs(utm_crs)
     ring_utm = headlands_ring(field_utm, combine_width_m=combine_width_m)
 

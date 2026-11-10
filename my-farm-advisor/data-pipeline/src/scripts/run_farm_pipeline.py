@@ -307,7 +307,7 @@ def main() -> None:
             dem_command_args,
             args.skip_dem_terrain,
         ),
-        ("ingest/download_soil.py", "Field soil tables (SSURGO / Ontario survey / Australia SLGA-ASF routing)", (), False),
+        ("ingest/download_soil.py", "Field soil tables (SSURGO / Ontario survey / Australia SLGA-ASF / Argentina INTA routing)", (), False),
         ("ingest/download_soilgrids.py", "SoilGrids 250 m global grid clips + field stats", (), False),
         ("ingest/download_weather.py", "Weather history tables", (), False),
         ("ingest/download_cdl.py", "Shared CDL/ACI history tables", (), False),

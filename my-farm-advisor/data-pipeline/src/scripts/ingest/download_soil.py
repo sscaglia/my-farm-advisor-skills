@@ -2,6 +2,7 @@
 # ruff: noqa: E402,I001
 """Download SSURGO soil data into canonical grower paths."""
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -17,6 +18,7 @@ sys.path.insert(0, str(_SCRIPTS_DIR / "lib"))
 from paths import (  # pyright: ignore[reportMissingImports]
     farm_boundary_path,
     farm_manifest_dir,
+    farm_soil_polygons_argentina_path,
     farm_soil_polygons_ontario_path,
     farm_soil_sample_path,
     farm_ssurgo_full_path,
@@ -24,6 +26,7 @@ from paths import (  # pyright: ignore[reportMissingImports]
     field_soil_full_path,
     field_soil_polygon_path,
     field_soil_summary_path,
+    shared_inta_dir,
     shared_soil_ontario_dir,
 )
 from reporting_bootstrap import (
@@ -39,6 +42,7 @@ from ssurgo_workflows import query_mupolygons_for_field  # pyright: ignore[repor
 
 SDA_URL = "https://sdmdataaccess.sc.egov.usda.gov/Tabular/post.rest"
 ONTARIO_SOURCE_NAME = "ontario_detailed_soil_survey"
+ARGENTINA_SOURCE_NAME = "inta_entre_rios_100k"
 
 
 def _load_ontario_module():
@@ -52,6 +56,21 @@ def _load_ontario_module():
         print(
             "  warn  ontario-soil-survey skill not found; routing every field "
             "through SSURGO (Canadian fields will have no soil rows)"
+        )
+        return None
+
+
+def _load_argentina_module():
+    """Resolve the argentina-soil skill module, or None when unavailable."""
+    try:
+        ensure_skill_path("argentina-soil")
+        import argentina_soil as argentina_module  # pyright: ignore[reportMissingImports]
+
+        return argentina_module
+    except FileNotFoundError:
+        print(
+            "  warn  argentina-soil skill not found; AR fields will fall back "
+            "to the SoilGrids grid step"
         )
         return None
 
@@ -170,6 +189,29 @@ def _replay_ontario_polygon_caches(
     force: bool,
 ) -> None:
     cache = farm_soil_polygons_ontario_path(grower_slug, farm_slug)
+    if not cache.exists():
+        return
+    try:
+        polygons = gpd.read_file(cache)
+    except Exception:
+        return
+    _write_ontario_polygon_caches(
+        polygons,
+        field_slug_map=field_slug_map,
+        grower_slug=grower_slug,
+        farm_slug=farm_slug,
+        force=force,
+    )
+
+
+def _replay_argentina_polygon_caches(
+    *,
+    field_slug_map: dict[str, str],
+    grower_slug: str,
+    farm_slug: str,
+    force: bool,
+) -> None:
+    cache = farm_soil_polygons_argentina_path(grower_slug, farm_slug)
     if not cache.exists():
         return
     try:
@@ -306,10 +348,15 @@ def _write_field_polygon_caches(
     soil_rows = soil_data.copy()
     if "mukey" not in soil_rows.columns:
         return
-    # Ontario rows carry local POLY_IDs the SDA server cannot resolve; their
-    # polygon caches are written straight from the Ontario provider payload.
+    # Ontario and Argentina rows carry local map-unit IDs the SDA server
+    # cannot resolve; their polygon caches are written straight from the
+    # provider payload.
     if "soil_source" in soil_rows.columns:
-        soil_rows = soil_rows[soil_rows["soil_source"] != ONTARIO_SOURCE_NAME]
+        soil_rows = soil_rows[
+            ~soil_rows["soil_source"].astype(str).isin(
+                {ONTARIO_SOURCE_NAME, ARGENTINA_SOURCE_NAME}
+            )
+        ]
     soil_rows["mukey"] = soil_rows["mukey"].astype(str)
 
     for _, field in fields_wgs84.iterrows():
@@ -423,6 +470,12 @@ def main():
                     farm_slug=farm_slug,
                     force=False,
                 )
+                _replay_argentina_polygon_caches(
+                    field_slug_map=field_slug_map,
+                    grower_slug=grower_slug,
+                    farm_slug=farm_slug,
+                    force=False,
+                )
             print(f"skip  SSURGO API fetch (cached): {farm_sample_output}")
             return soil_data
 
@@ -430,7 +483,13 @@ def main():
     # Australian fields use SLGA/ASF (+ANSIS site index), everything else
     # SSURGO/SDA. Grid floor (SoilGrids 250 m) is a separate step:
     # ingest/download_soilgrids.py. See soil/soil-routing.md.
-    ontario_module = _load_ontario_module()
+    if "country" in fields.columns:
+        country = fields["country"].fillna("US").astype(str).str.upper()
+    else:
+        country = pd.Series(["US"] * len(fields), index=fields.index)
+    # Ontario coverage requires a large survey payload download; only probe it
+    # when the farm actually has Canadian fields.
+    ontario_module = _load_ontario_module() if bool(country.eq("CA").any()) else None
     ontario_field_ids: set[str] = set()
     if ontario_module is not None:
         try:
@@ -440,14 +499,12 @@ def main():
         except Exception as exc:
             print(f"  warn  Ontario survey coverage check failed ({exc}); SSURGO-only routing")
     on_mask = fields["field_id"].astype(str).isin(ontario_field_ids)
-    if "country" in fields.columns:
-        country = fields["country"].fillna("US").astype(str).str.upper()
-    else:
-        country = pd.Series(["US"] * len(fields), index=fields.index)
     au_mask = country.eq("AU") & ~on_mask
+    ar_mask = country.eq("AR") & ~on_mask
     ontario_fields = fields[on_mask].copy()
-    us_fields = fields[~on_mask & ~au_mask].copy()
+    us_fields = fields[~on_mask & ~au_mask & ~ar_mask].copy()
     au_fields = fields[au_mask].copy()
+    ar_fields = fields[ar_mask].copy()
     if not ontario_fields.empty:
         print(
             f"  routing {len(ontario_fields)} field(s) inside Ontario survey "
@@ -464,6 +521,40 @@ def main():
             grower_slug=grower_slug,
             farm_slug=farm_slug,
         )
+
+    argentina_rows = pd.DataFrame()
+    argentina_polygons = None
+    if not ar_fields.empty:
+        print(
+            f"  routing {len(ar_fields)} field(s) in Argentina to INTA "
+            "Entre Ríos 1:100,000 soil survey + series analytical profiles"
+        )
+        argentina_module = _load_argentina_module()
+        if argentina_module is not None:
+            try:
+                argentina_rows = argentina_module.download_soil_argentina(
+                    ar_fields, cache_dir=shared_inta_dir(), force=force
+                )
+            except Exception as exc:
+                print(f"  warn  INTA soil provider failed: {exc}")
+                argentina_rows = pd.DataFrame()
+            if not argentina_rows.empty:
+                print(
+                    f"  INTA survey: {len(argentina_rows)} soil records for "
+                    f"{argentina_rows['field_id'].nunique()} fields"
+                )
+            try:
+                argentina_polygons = argentina_module.field_polygon_intersections(
+                    ar_fields, cache_dir=shared_inta_dir(), force=force
+                )
+            except Exception as exc:
+                print(f"  warn  INTA polygon intersections failed: {exc}")
+            provenance_target = farm_manifest_dir(grower_slug, farm_slug) / "inta_soil_provenance.json"
+            provenance_target.parent.mkdir(parents=True, exist_ok=True)
+            provenance_target.write_text(
+                json.dumps(argentina_module.provenance(), indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
 
     soil_data = download_soil(
         us_fields if not us_fields.empty else fields,
@@ -506,6 +597,10 @@ def main():
         if frames:
             soil_data = pd.concat(frames, ignore_index=True)
 
+    if argentina_rows is not None and not argentina_rows.empty:
+        frames = [f for f in (soil_data, argentina_rows) if f is not None and not f.empty]
+        soil_data = pd.concat(frames, ignore_index=True)
+
     if not soil_data.empty:
         soil_data.to_csv(farm_full_output, index=False)
         soil_data.to_csv(farm_sample_output, index=False)
@@ -527,6 +622,74 @@ def main():
             )
             .assign(ph_constraint="none", erosion_risk="moderate")
         )
+        if "soil_source" in grouped.columns and grouped["soil_source"].astype(str).eq(
+            ARGENTINA_SOURCE_NAME
+        ).any():
+            # INTA rows carry cm/cm AWC per horizon plus a field-area share, so
+            # total AWS is thickness- and area-weighted instead of a raw sum.
+            corrected: dict[str, float] = {}
+            for field_id, rows in soil_data.groupby("field_id"):
+                if not rows["soil_source"].astype(str).eq(ARGENTINA_SOURCE_NAME).all():
+                    continue
+                depth_top = pd.to_numeric(rows["hzdept_r"], errors="coerce").clip(lower=0.0, upper=30.0)
+                depth_bottom = pd.to_numeric(rows["hzdepb_r"], errors="coerce").clip(lower=0.0, upper=30.0)
+                thickness = (depth_bottom - depth_top).clip(lower=0.0)
+                share = (
+                    pd.to_numeric(rows["soil_area_share"], errors="coerce").fillna(0.0)
+                    if "soil_area_share" in rows.columns
+                    else pd.Series(1.0, index=rows.index)
+                )
+                aws_cm = float(
+                    (
+                        pd.to_numeric(rows["awc_r"], errors="coerce").fillna(0.0)
+                        * thickness.fillna(0.0)
+                        * share
+                    ).sum()
+                )
+                corrected[str(field_id)] = round(aws_cm / 2.54, 3)
+            grouped["total_aws_inches"] = grouped.apply(
+                lambda row: corrected.get(
+                    str(row["field_id"]), row.get("total_aws_inches")
+                ),
+                axis=1,
+            )
+            # INTA rows arrive grouped by map unit, so "first" is not always
+            # the area-dominant series.  Pick the component with the largest
+            # field-area share and use that component's drainage class.
+            dominant_soil: dict[str, str] = {}
+            dominant_drainage: dict[str, str] = {}
+            for field_id, rows in soil_data.groupby("field_id"):
+                if not rows["soil_source"].astype(str).eq(ARGENTINA_SOURCE_NAME).all():
+                    continue
+                unique_units = rows.drop_duplicates(subset=["mukey", "compname"])
+                shares = unique_units.assign(
+                    _share=pd.to_numeric(
+                        unique_units["soil_area_share"], errors="coerce"
+                    ).fillna(0.0)
+                )
+                by_component = shares.groupby("compname")["_share"].sum()
+                if by_component.empty:
+                    continue
+                chosen = str(by_component.idxmax())
+                dominant_soil[str(field_id)] = chosen
+                drains = rows.loc[
+                    rows["compname"].astype(str) == chosen, "drainagecl"
+                ].dropna().astype(str)
+                if not drains.empty:
+                    dominant_drainage[str(field_id)] = str(drains.mode().iloc[0])
+            if dominant_soil:
+                grouped["dominant_soil"] = grouped.apply(
+                    lambda row: dominant_soil.get(
+                        str(row["field_id"]), row.get("dominant_soil")
+                    ),
+                    axis=1,
+                )
+                grouped["drainage_class"] = grouped.apply(
+                    lambda row: dominant_drainage.get(
+                        str(row["field_id"]), row.get("drainage_class")
+                    ),
+                    axis=1,
+                )
         grouped.to_csv(farm_summary_output, index=False)
 
         if field_slug_map:
@@ -556,6 +719,19 @@ def main():
                 ontario_polygons.to_file(farm_polygon_cache, driver="GPKG", layer="soil_polygons")
                 _write_ontario_polygon_caches(
                     ontario_polygons,
+                    field_slug_map=field_slug_map,
+                    grower_slug=grower_slug,
+                    farm_slug=farm_slug,
+                    force=force,
+                )
+            if argentina_polygons is not None and not argentina_polygons.empty:
+                farm_polygon_cache = farm_soil_polygons_argentina_path(grower_slug, farm_slug)
+                farm_polygon_cache.parent.mkdir(parents=True, exist_ok=True)
+                argentina_polygons.to_file(
+                    farm_polygon_cache, driver="GPKG", layer="soil_polygons"
+                )
+                _write_ontario_polygon_caches(
+                    argentina_polygons,
                     field_slug_map=field_slug_map,
                     grower_slug=grower_slug,
                     farm_slug=farm_slug,

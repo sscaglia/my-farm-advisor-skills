@@ -24,18 +24,25 @@ from paths import (
     farm_cdl_full_composition_path,
     farm_cdl_rotation_path,
     farm_cdl_year_table_path,
+    farm_mnc_seasonal_detail_path,
     shared_cdl_conus_raster_path,
     shared_cdl_dir,
     shared_cdl_state_raster_path,
 )
+from admin_regions import state_fips_lookup
 from reporting_bootstrap import ensure_skill_path
 
 ensure_skill_path("cdl-cropland")
 
 from aci_reporting import ACI_MIN_YEAR, extract_aci_crop_composition
 from cdl_reporting import extract_crop_composition, summarize_crop_history
+from mnc_reporting import (
+    MNC_YEARS,
+    campaign_provenance as mnc_campaign_provenance,
+    extract_mnc_crop_composition,
+)
 
-DEFAULT_CDL_LATEST_YEAR = 2023  # 2026 program data rule: external data must be public by 2026-02-01 (CDL 2024+ publishes later)
+DEFAULT_CDL_LATEST_YEAR = 2025  # CDL 2025 is public (released Feb 2026); install.sh and init_shared_data.py default to 2025
 DEFAULT_CDL_WINDOW_YEARS = 5
 
 
@@ -184,17 +191,50 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_CDL_WINDOW_YEARS,
         help="Number of available CDL years to initialize when --cdl-years is omitted",
     )
+    parser.add_argument(
+        "--mnc-raster-only",
+        action="store_true",
+        help="Download and verify Argentina MNC campaign rasters without farm extraction",
+    )
+    parser.add_argument(
+        "--mnc-years",
+        default=None,
+        help="Comma-separated MNC campaign years for --mnc-raster-only",
+    )
     parser.add_argument("--force", action="store_true", help="Redownload CDL rasters")
     return parser.parse_args()
 
 
+def _state_fips_lookup() -> dict[str, str]:
+    """Map state name / abbreviation / FIPS to a zero-padded FIPS code.
+
+    Field boundaries from CSB carry ``state`` but not ``state_fips``; the
+    shared resolver reads the geoadmin states layer (with a static fallback)
+    so an Illinois farm never reads the Iowa CDL raster.
+    """
+
+    return state_fips_lookup()
+
+
 def _state_fips_values(fields: gpd.GeoDataFrame) -> list[str]:
-    if "state_fips" not in fields.columns:
-        return ["19"]
-    values = (
-        pd.Series(fields["state_fips"], dtype="object").fillna("").astype(str).str.strip().tolist()
-    )
-    unique_values = sorted({value.zfill(2) for value in values if value})
+    values: list[str] = []
+    if "state_fips" in fields.columns:
+        values = [
+            str(value).strip().zfill(2)
+            for value in fields["state_fips"]
+            if str(value).strip()
+        ]
+    if not values and "state" in fields.columns:
+        lookup = _state_fips_lookup()
+        for value in fields["state"]:
+            key = str(value).strip().lower()
+            if not key:
+                continue
+            if key.isdigit():
+                values.append(key.zfill(2))
+            elif key in lookup:
+                values.append(lookup[key])
+    unique_values = sorted(set(values))
     return unique_values or ["19"]
 
 
@@ -209,6 +249,19 @@ def _table_field_ids(csv_path: Path) -> set[str]:
 
 def main():
     args = parse_args()
+    if args.mnc_raster_only:
+        from mnc_reporting import prefetch_mnc_years
+
+        years = _parse_years(args.mnc_years)
+        paths = prefetch_mnc_years(years, force=args.force)
+        print(
+            json.dumps(
+                {"mnc_raster_count": len(paths), "rasters": [str(path) for path in paths]},
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return tuple(paths)
     if args.raster_only:
         paths = prepare_shared_cdl_rasters(
             scope=args.cdl_scope,
@@ -241,25 +294,40 @@ def main():
     fields = gpd.read_file(farm_boundary_path(grower_slug, farm_slug))
     print(f"Loaded {len(fields)} fields")
     # Country routing: Canadian fields use the AAFC Annual Crop Inventory
-    # (Canada's 30 m CDL analog, 2009+); everything else uses US CDL. The
-    # `country` property is written by boundary ingestion (e.g. converters set
-    # country='CA'); farms lacking the column fall through to CDL unchanged.
+    # (Canada's 30 m CDL analog, 2009+); Argentine fields use INTA's Mapa
+    # Nacional de Cultivos (MNC, 30 m, campaigns 2020/21+); everything else
+    # uses US CDL. The `country` property is written by boundary ingestion
+    # (e.g. converters set country='CA'/'AR'); farms lacking the column fall
+    # through to CDL unchanged.
     if "country" in fields.columns:
-        ca_mask = fields["country"].astype(str).str.strip().str.upper() == "CA"
+        country = fields["country"].astype(str).str.strip().str.upper()
+        ca_mask = country == "CA"
+        ar_mask = country == "AR"
     else:
         ca_mask = pd.Series(False, index=fields.index)
+        ar_mask = pd.Series(False, index=fields.index)
     canada_fields = fields.loc[ca_mask].copy()
-    us_fields = fields.loc[~ca_mask].copy()
+    argentina_fields = fields.loc[ar_mask].copy()
+    us_fields = fields.loc[~ca_mask & ~ar_mask].copy()
     if not canada_fields.empty:
         print(
             f"  routing {len(canada_fields)} field(s) to AAFC Annual Crop Inventory "
             f"(ACI {ACI_MIN_YEAR}+)"
+        )
+    if not argentina_fields.empty:
+        print(
+            f"  routing {len(argentina_fields)} field(s) to INTA National Map of Crops "
+            f"(MNC campaigns {', '.join(f'{y-1}/{str(y)[2:]}' for y in sorted(MNC_YEARS))})"
         )
     state_fips_values = _state_fips_values(us_fields)
     if not us_fields.empty:
         print("State CDL coverage:", ", ".join(state_fips_values))
 
     target_years = _target_cdl_years()
+    if not argentina_fields.empty:
+        # MNC coverage is fixed at the published campaigns; keep the US CDL
+        # window and union in every MNC year so mixed runs stay consistent.
+        target_years = sorted(set(target_years) | set(MNC_YEARS), reverse=True)
     cached_years = [
         year
         for year in target_years
@@ -304,6 +372,7 @@ def main():
 
     crop_mix_frames = []
     completed_years: list[int] = []
+    mnc_seasonal_detail: list[dict[str, object]] = []
     for year in target_years:
         print(f"\n--- {year} CDL/ACI ---")
         state_frames: list[pd.DataFrame] = []
@@ -342,6 +411,25 @@ def main():
                     f"  ACI {year}: {len(valid)} composition rows for "
                     f"{valid['field_id'].nunique()} Canadian fields"
                 )
+        if not argentina_fields.empty and year in MNC_YEARS:
+            try:
+                mnc_frame = extract_mnc_crop_composition(
+                    argentina_fields,
+                    year,
+                    seasonal_detail=mnc_seasonal_detail,
+                    force_download=force,
+                )
+            except Exception as exc:  # noqa: BLE001 - keep US/CA years usable
+                print(f"  warn  MNC {year} extraction failed: {exc}")
+                mnc_frame = pd.DataFrame()
+            if not mnc_frame.empty:
+                state_frames.append(mnc_frame)
+                valid = mnc_frame[mnc_frame["crop_name"] != "No Data"]
+                print(
+                    f"  MNC {year}: {len(valid)} composition rows for "
+                    f"{valid['field_id'].nunique()} Argentine fields "
+                    f"(season={sorted(mnc_frame['season'].unique().tolist())})"
+                )
         if not state_frames:
             print(f"  Warning: no CDL/ACI composition rows were available for {year}; skipping")
             continue
@@ -374,6 +462,22 @@ def main():
     )
     crop_mix.to_csv(composition_output, index=False)
     print(f"  Saved: {composition_output}")
+
+    if mnc_seasonal_detail:
+        seasonal_output = ensure_parent(farm_mnc_seasonal_detail_path(grower_slug, farm_slug))
+        pd.DataFrame(mnc_seasonal_detail).to_csv(seasonal_output, index=False)
+        print(f"  Saved: {seasonal_output}")
+        provenance_output = seasonal_output.parent / "mnc_provenance.json"
+        provenance_output.write_text(
+            json.dumps(
+                mnc_campaign_provenance(sorted({int(row["year"]) for row in mnc_seasonal_detail})),
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        print(f"  Saved: {provenance_output}")
 
     print("\n✓ CDL analysis complete")
     for year, frame in zip(completed_years, crop_mix_frames):
