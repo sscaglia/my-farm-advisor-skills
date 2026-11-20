@@ -182,6 +182,16 @@ def main(argv: list[str] | None = None) -> int:
     mdir = farm_dir / "manifests"
     mdir.mkdir(exist_ok=True)
     (mdir / "csb_fields_provenance.json").write_text(json.dumps(prov, indent=2, default=str))
+    # Keep farm.json routing metadata authoritative for this farm's country and
+    # state; SSURGO/CDL/strategy routing reads farm metadata as the fallback
+    # when a boundary property is absent.
+    farm_metadata_path = farm_dir / "farm.json"
+    if farm_metadata_path.exists():
+        metadata = json.loads(farm_metadata_path.read_text())
+        metadata["country"] = (args.country or metadata.get("country") or "US").upper()
+        if args.state:
+            metadata["state"] = args.state
+        farm_metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")
     jdir = DATA_ROOT / "shared" / "osm" / "manifests"
     jdir.mkdir(parents=True, exist_ok=True)
     journal = jdir / "sha256_journal.json"

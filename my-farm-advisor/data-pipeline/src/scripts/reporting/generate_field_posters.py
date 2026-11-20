@@ -63,6 +63,7 @@ from pipeline import (
     load_manifest,
     step_is_stale,
 )
+from projection import utm_crs_for_geometry
 from ssurgo_workflows import (
     plot_headlands_om_overlay,
     plot_ssurgo_component_map,
@@ -77,8 +78,6 @@ from weather_reporting import (
 )
 
 _SCRIPT = Path(__file__)
-_UTM_WEST = "EPSG:32615"
-_UTM_EAST = "EPSG:32616"
 _DEFAULT_GROWER = os.environ.get("AG_GROWER_SLUG", "default-grower")
 _DEFAULT_FARM = os.environ.get("AG_FARM_SLUG", "default-farm")
 _DEFAULT_FARM_NAME = os.environ.get("AG_FARM_NAME", "Default Farm")
@@ -127,7 +126,30 @@ _BODY_TEXT_SIZE = 9.5
 
 
 def _utm(field_row) -> str:
-    return _UTM_WEST if field_row.geometry.centroid.x < -90 else _UTM_EAST
+    return utm_crs_for_geometry(field_row.geometry)
+
+
+def _soil_survey_label(detail_df) -> str:
+    source = ""
+    if detail_df is not None and not detail_df.empty and "soil_source" in detail_df.columns:
+        values = detail_df["soil_source"].dropna().astype(str).str.strip()
+        if not values.empty:
+            source = values.iloc[0]
+    if source == "inta_entre_rios_100k":
+        return "Soil components (INTA Entre Ríos 1:100k)"
+    if source == "ontario_detailed_soil_survey":
+        return "Soil components (Ontario Detailed Soil Survey)"
+    return "Soil components (SSURGO)"
+
+
+def _region_label(field_row) -> str:
+    country = str(field_row.get("country") or "").strip().upper()
+    if country == "AR":
+        return "Entre Ríos, Argentina"
+    state = str(field_row.get("state") or field_row.get("state_name") or "").strip()
+    if state:
+        return f"{state} farm"
+    return "Farm field"
 
 
 def _field_slug_lookup(inventory_path: Path = _FIELD_INVENTORY) -> dict[str, str]:
@@ -441,11 +463,12 @@ def _render_field_poster(
         if not match.empty:
             merged_row.update(match.iloc[0].to_dict())
     management_bullets = reporting_mod.compute_management_implications(merged_row)
+    survey_label = _soil_survey_label(detail_df)
 
     fig = plt.figure(figsize=(28, 36))
     fig.patch.set_facecolor("#fafaf9")
     fig.suptitle(
-        f"Field Intelligence Report — {field_id[-8:]}  ·  {float(field_row.get('area_acres', 0)):.1f} ac  ·  Iowa Corn Belt",
+        f"Field Intelligence Report — {field_id[-8:]}  ·  {float(field_row.get('area_acres', 0)):.1f} ac  ·  {_region_label(field_row)}",
         fontsize=_POSTER_TITLE_SIZE,
         fontweight="bold",
         y=0.993,
@@ -465,9 +488,9 @@ def _render_field_poster(
     _soil_map_panel(
         fig.add_subplot(gs[0, 1]),
         soil_map_assets["component"],
-        "Soil components (SSURGO)",
+        survey_label,
         lambda ax: plot_ssurgo_component_map(
-            ax, field_wgs84, ssurgo_wgs84, "Soil components (SSURGO)", ctx=True
+            ax, field_wgs84, ssurgo_wgs84, survey_label, ctx=True
         ),
     )
     plot_headlands_om_overlay(
