@@ -286,6 +286,53 @@ def _field_crop_override(farm_root: Path, field_slug: str) -> str:
     )
 
 
+def _latest_cdl_crop(farm_root: Path, field_slug: str) -> str:
+    """Return the newest annual CDL/MNC dominant crop for a field.
+
+    Last-resort fallback for the grower map's crop chip when neither a human
+    override nor a boundary crop label exists (for example Argentina's
+    OSM-derived ``ar-o*`` parcels).  Reads only the annual
+    ``<farm>_<year>_cdl.csv`` tables, not the stacked composition file.
+    """
+
+    tables = farm_root / "derived" / "tables"
+    if not tables.is_dir():
+        return ""
+    candidates: list[tuple[int, Path]] = []
+    for path in tables.glob("*_cdl.csv"):
+        parts = path.stem.split("_")
+        if len(parts) < 3 or parts[-1] != "cdl":
+            continue
+        try:
+            year = int(parts[-2])
+        except ValueError:
+            continue
+        candidates.append((year, path))
+    for _, path in sorted(candidates, reverse=True):
+        try:
+            with path.open(newline="", encoding="utf-8-sig") as handle:
+                rows = [
+                    row
+                    for row in csv.DictReader(handle)
+                    if (row.get("field_id") or "").strip() == field_slug
+                ]
+        except OSError:
+            continue
+        if not rows:
+            continue
+
+        def _pct(row: dict[str, Any]) -> float:
+            try:
+                return float(row.get("pct") or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        name = (max(rows, key=_pct).get("crop_name") or "").strip()
+        if name and name != "No Data" and not name.startswith("Code_"):
+            return name
+    return ""
+
+
 def _field_inventory(path: Path) -> dict[str, str]:
     lookup: dict[str, str] = {}
     if not path.is_file():
@@ -570,6 +617,7 @@ def load_grower(
                     or _first_text(
                         properties.get("crop"),
                         properties.get("crop_name"),
+                        _latest_cdl_crop(farm_root, field_slug),
                         default="Unknown",
                     ),
                     "area_acres": round(area_acres, 1) if area_acres is not None else None,

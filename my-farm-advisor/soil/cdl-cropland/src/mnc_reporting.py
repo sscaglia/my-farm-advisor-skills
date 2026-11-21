@@ -167,12 +167,21 @@ MNC_TO_CDL_NAME: dict[str, str] = {
     "Tabaco": "Tobacco",
     "Garbanzo": "Chickpeas",
     "Cereales de invierno": "Winter Cereals",
-    "Otros cultivos": "Other",
+    "Otros cultivos": "Other crops",
     "Arveja": "Peas",
     "Barbecho": "Fallow/Idle",
-    "No agrícola": "Other",
+    # ``No agrícola`` is the MNC class for native/exotic perennial grasses,
+    # pastures and woody vegetation -- not a catch-all "other crop".  Keeping
+    # it distinct stops pasture from being reported as a crop rotation.
+    "No agrícola": "Non-agricultural",
     "Máscara": "No Data",
 }
+
+# Minimum share of field pixels that must be a real crop before a campaign is
+# treated as cropland rather than pasture/non-agricultural.
+CROPLAND_MIN_AG_SHARE = 0.50
+# Below this share the parcel is reported as fully non-agricultural.
+NON_AG_MIN_AG_SHARE = 0.20
 
 # Codes that count as an actual crop (as opposed to fallow / non-ag / mask).
 MNC_AG_CODES: dict[str, set[int]] = {
@@ -272,6 +281,16 @@ def _ag_share(counts: dict[int, int], season: str) -> float:
         return 0.0
     agriculture = sum(pixels for code, pixels in counts.items() if code in MNC_AG_CODES[season])
     return agriculture / total
+
+
+def _cropland_status(ag_share: float) -> str:
+    """Classify a parcel by the crop share of its selected campaign map."""
+
+    if ag_share >= CROPLAND_MIN_AG_SHARE:
+        return "cropland"
+    if ag_share >= NON_AG_MIN_AG_SHARE:
+        return "partial"
+    return "non_agricultural"
 
 
 def _season_rows(
@@ -382,8 +401,20 @@ def extract_mnc_crop_composition(
                     }
                 )
         chosen = summer_rows if season == "summer" else winter_rows
+        chosen_counts = summer_counts if season == "summer" else winter_counts
+        ag_share = _ag_share(chosen_counts, season)
         selected_rows.extend(
-            {**row, "crop_source": SOURCE_NAME, "season": season} for row in chosen
+            {
+                **row,
+                "crop_source": SOURCE_NAME,
+                "season": season,
+                # Persist the crop share so downstream EDA can exclude
+                # pasture/non-agricultural parcels from crop and rotation
+                # analysis instead of re-deriving it from class labels.
+                "agricultural_share": round(ag_share, 4),
+                "cropland_status": _cropland_status(ag_share),
+            }
+            for row in chosen
         )
     return pd.DataFrame(selected_rows)
 

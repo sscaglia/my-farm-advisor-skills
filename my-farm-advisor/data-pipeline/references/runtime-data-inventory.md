@@ -306,11 +306,16 @@ standalone `reports/<grower>_field_map.html`.
 |---|---|
 | `growers/<grower>/grower.json` | `grower_slug`, `display_name`, `notes` |
 | `farms/<farm>/farm.json` | `grower_slug`, `farm_slug`, `display_name`, `state`, `country`, `default_crs`, `notes` |
-| `fields/<field>/field.json` | `grower_slug`, `farm_slug`, `field_slug`, `display_name`, `crop_name`, `field_id`, plus relative paths to boundary, soil, weather, and satellite |
+| `fields/<field>/field.json` | `grower_slug`, `farm_slug`, `field_slug`, `display_name`, `field_id` (= the lowercase `field_slug`), `country`, `state`, `county`, `source`, `area_acres`, `area_ha`, plus relative paths to boundary, soil, weather, and satellite |
 
 `field.json` is the routing record: downstream steps resolve inputs through these
 relative paths, so renaming a field directory without updating it breaks the
-pipeline. It is also the supported override point for crop naming (see AR below).
+pipeline. `ingest/download_fields.py` syncs the stable identity/area attributes
+from the farm boundary via
+`reporting_bootstrap.sync_field_metadata_from_boundary()`; the boundary GeoJSON
+stays authoritative and the sync is idempotent. `crop` / `crop_name` are never
+synced — they are the supported human override for crop naming (see AR below),
+and the atlas prefers them over boundary properties only when set.
 
 ### 5.2 Boundaries
 
@@ -594,8 +599,12 @@ Particularities:
 2. **Soil filename vs provenance mismatch in AR.** `ssurgo_*` names and
    `usda-sda` metadata are inherited writer conventions. Use
    `manifests/inta_soil_provenance.json` for AR provenance.
-3. **AR boundary crops are `Unknown`.** `field.json` `crop_name` is the corrected
-   source of truth; boundary geometry carries no reliable crop.
+3. **AR boundary crops are `Unknown`.** For `ar-r1`–`ar-r3`, `field.json`
+   `crop_name` holds the hand-corrected value (Corn, Corn, Wheat) and remains the
+   override read by the atlas; the sync never overwrites it. For the OSM-derived
+   `ar-o*` fields there is no override, so crop identity comes from MNC. MNC
+   class 22 (`No agrícola`) is pasture/non-agricultural, not "other crop" — see
+   `cropland_status` in the CDL tables.
 4. **Terrain conditioning is disabled everywhere** (`skipped_backend_unavailable`).
    Derived hydrology is advisory; do not present ponding/erosion proxies as
    drainage design.

@@ -542,8 +542,18 @@ def generate_field_recommendations(
                 "Well-drained profile supports timely operations; use that advantage to execute narrower timing windows."
             )
 
+    rotation_confidence = str(field_row.get("rotation_confidence") or "").strip().lower()
+    cropland_years = _safe_float(field_row.get("cropland_years"))
+    non_cropland = rotation_confidence == "not_applicable" or (
+        cropland_years is not None and cropland_years <= 0
+    )
     diversity = _safe_float(field_row.get("crop_diversity"))
-    if diversity is not None and diversity <= 1.0:
+    if non_cropland:
+        watchouts.append(
+            "No managed crop in the crop-history window; this parcel reads as pasture or "
+            "non-agricultural land, so rotation advice is not applicable."
+        )
+    elif diversity is not None and diversity <= 1.0:
         action_plan.append(
             "Low recent rotation diversity raises disease and weed pressure, so keep scouting intensity high and preserve trait/chemistry flexibility."
         )

@@ -624,7 +624,7 @@ def _field_card(
   <details open><summary><strong>Crop rotation outlook</strong></summary>
     <p><strong>History:</strong> {_safe(row_dict.get("rotation_sequence"))}</p>
     <p><strong>Heuristic outlook:</strong> {_safe(row_dict.get("rotation_outlook"))}</p>
-    <p><strong>Confidence:</strong> {_safe(row_dict.get("rotation_confidence"))} &middot; <strong>Window:</strong> {_safe(row_dict.get("history_start_year"))}-{_safe(row_dict.get("history_end_year"))}</p>
+    <p><strong>Confidence:</strong> {_safe(str(row_dict.get("rotation_confidence", "")).replace("_", " "))} &middot; <strong>Window:</strong> {_safe(row_dict.get("history_start_year"))}-{_safe(row_dict.get("history_end_year"))}</p>
   </details><hr>
   <details><summary><strong>Farm-relative standing</strong></summary>
     {rank_html if rank_html else "<p>No ranking data available</p>"}

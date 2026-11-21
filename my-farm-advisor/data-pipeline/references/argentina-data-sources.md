@@ -165,6 +165,11 @@ posters, portfolio poster, soil cards, texture triangles, HTML, and Markdown.
   when summer is masked/non-agricultural. Both seasons are written to
   `derived/summaries/mnc_seasonal_detail.csv`, with
   `derived/summaries/mnc_provenance.json`.
+- **Pasture is not a crop.** MNC `No agrícola` (summer 22 / winter 20) maps to
+  `Non-agricultural`, and rows carry `agricultural_share` + `cropland_status`
+  (`cropland` / `partial` / `non_agricultural`). A parcel that is non-crop in
+  every campaign gets `rotation_confidence=not_applicable` rather than a
+  high-confidence "rotation"; EDA should exclude or flag those parcels.
 - **Crop strategy** uses the Entre Ríos profile (spring planting, June-July
   wheat window, Vertisol waterlogging and humid-canopy disease watchouts).
 - **NDVI cards** use the MNC summer raster as the crop mask with MNC codes

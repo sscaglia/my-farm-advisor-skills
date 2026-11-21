@@ -194,7 +194,7 @@ def ensure_canonical_field_artifacts(
             "farm_slug": farm_slug,
             "field_slug": field_slug,
             "display_name": field_slug,
-            "field_id": field_slug.replace("-", "_").upper(),
+            "field_id": field_slug,
             "boundary_file": "boundary/field_boundary.geojson",
             "soil_file": "soil/ssurgo_soil_types.geojson",
             "weather_file": "weather/daily_weather.csv",
@@ -263,6 +263,101 @@ def ensure_canonical_field_artifacts(
         overwrite=False,
     )
     _write_text(base / "logs" / "pipeline_runs.jsonl", "", overwrite=False)
+
+
+ACRES_PER_HECTARE = 2.471053814671653
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def sync_field_metadata_from_boundary(
+    grower_slug: str = DEFAULT_GROWER,
+    farm_slug: str = DEFAULT_FARM,
+    boundary_path: Path | None = None,
+    inventory_path: Path | None = None,
+) -> list[str]:
+    """Copy stable field attributes from the boundary file into ``field.json``.
+
+    The farm boundary GeoJSON is the authority for ``field_id``, area, county,
+    state and country; ``field.json`` is the per-field metadata/override
+    sidecar.  This sync keeps the two aligned without ever touching ``crop`` or
+    ``crop_name`` -- those stay a human override slot consumed by the web map,
+    and must not be filled from the boundary or the override becomes
+    meaningless.
+
+    Returns the slugs whose metadata changed.  Writing is atomic per file and
+    idempotent, so repeated pipeline runs do not churn the tree.
+    """
+
+    boundary = boundary_path or (
+        farm_root(grower_slug, farm_slug) / "boundary" / "field_boundaries.geojson"
+    )
+    if not boundary.is_file():
+        return []
+    try:
+        collection = json.loads(boundary.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+
+    slug_map = field_slug_map_from_inventory(inventory_path)
+    changed: list[str] = []
+    for feature in collection.get("features", []):
+        props = feature.get("properties") or {}
+        field_id = str(props.get("field_id") or "").strip()
+        if not field_id:
+            continue
+        field_slug = (
+            str(props.get("field_slug") or "").strip()
+            or slug_map.get(field_id)
+            or field_id
+        )
+        metadata_path = fields_root(grower_slug, farm_slug) / field_slug / "field.json"
+        if not metadata_path.exists():
+            ensure_canonical_field_artifacts(field_slug, grower_slug, farm_slug)
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+
+        payload["grower_slug"] = grower_slug
+        payload["farm_slug"] = farm_slug
+        payload["field_slug"] = field_slug
+        # ``field_slug`` is the canonical lowercase join key; the boundary
+        # ``field_id`` selects the row but must not reintroduce case drift.
+        payload["field_id"] = field_slug
+        for key in ("country", "state", "county", "source"):
+            value = props.get(key)
+            if value is not None and str(value).strip():
+                payload[key] = str(value).strip()
+
+        acres = _optional_float(props.get("area_acres"))
+        hectares = _optional_float(props.get("area_ha_est"))
+        if acres is None and hectares is not None:
+            acres = hectares * ACRES_PER_HECTARE
+        if hectares is None and acres is not None:
+            hectares = acres / ACRES_PER_HECTARE
+        if acres is not None:
+            payload["area_acres"] = round(acres, 2)
+        if hectares is not None:
+            payload["area_ha"] = round(hectares, 2)
+
+        serialized = json.dumps(payload, indent=2) + "\n"
+        try:
+            current = metadata_path.read_text(encoding="utf-8")
+        except OSError:
+            current = ""
+        if current != serialized:
+            metadata_path.parent.mkdir(parents=True, exist_ok=True)
+            metadata_path.write_text(serialized, encoding="utf-8")
+            changed.append(field_slug)
+    return changed
 
 
 def ensure_canonical_data_tree(

@@ -19,6 +19,26 @@ coverage, then record which one you used in the boundary properties
 area_ha_est, crop, area_acres` (+ `source`, and source-specific ids like
 `osm_way_id`/`csb_id`). `country` selects the soil tier (soil/soil-routing.md).
 
+### Source-of-truth rule (field identity and static attributes)
+
+The farm boundary GeoJSON is the authority for `field_id`, `country`, `state`,
+`county`, `area_acres`/`area_ha`, `source` and the boundary's published
+`crop`. `field-inventory.csv` carries only `field_id,field_slug`, and
+`field.json` is the per-field metadata/override sidecar:
+
+- `field.json.field_id` **is the lowercase `field_slug`** (for example
+  `il-r1`), never an uppercased scaffold value (`IL_R1`). Joins on the
+  boundary, inventory, weather and crop-history tables all use that form.
+- `ingest/download_fields.py` calls
+  `reporting_bootstrap.sync_field_metadata_from_boundary()` after writing the
+  boundaries. The sync copies the stable attributes above into `field.json`,
+  derives whichever of acres/hectares the boundary omits, and is idempotent.
+- The sync **never** writes `crop` or `crop_name`. Those remain the human
+  override slot read by the grower web map; filling them from the boundary
+  would make the override meaningless and hide boundary-vs-CDL
+  disagreements. To override a field's current crop, set `crop` (or
+  `crop_name`) by hand.
+
 ## US — USDA CSB via FIBOA hosted GeoParquet (`download_csb_fields.py`)
 
 `https://data.source.coop/fiboa/us-usda-cropland/us_usda_cropland.parquet`

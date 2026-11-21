@@ -326,7 +326,7 @@ def _field_identity_card(
                 f"{r.get('predicted_following_crop', 'Unknown')} after"
             ),
             (
-                f"Confidence: {str(r.get('rotation_confidence', 'unknown')).title()}; "
+                f"Confidence: {str(r.get('rotation_confidence', 'unknown')).replace('_', ' ').title()}; "
                 f"window {r.get('history_start_year', '?')}-{r.get('history_end_year', '?')}"
             ),
         ]

@@ -711,14 +711,26 @@ Real runtime examples (2026-11-10):
   "farm_slug": "ia-farm",
   "field_slug": "ia-r1",
   "display_name": "ia-r1",
-  "field_id": "IA_R1",
+  "field_id": "ia-r1",
   "boundary_file": "boundary/field_boundary.geojson",
   "soil_file": "soil/ssurgo_soil_types.geojson",
   "weather_file": "weather/daily_weather.csv",
   "satellite_dir": "satellite/",
-  "notes": "Canonical field metadata"
+  "notes": "Canonical field metadata",
+  "country": "US",
+  "state": "Iowa",
+  "county": "Kossuth",
+  "source": "usda_csb_fiboa",
+  "area_acres": 873.0,
+  "area_ha": 353.3
 }
 ```
+
+`field.json` is the per-field metadata/override sidecar, not a second inventory:
+`field_id` is the lowercase `field_slug`, and `country`/`state`/`county`/area/
+`source` are synced from the boundary file after ingest. `crop` and `crop_name`
+are deliberately left for a human override and are read by the grower web map;
+the boundary GeoJSON and CDL/MNC history remain the default crop authority.
 
 ### 6.4 Boundaries
 

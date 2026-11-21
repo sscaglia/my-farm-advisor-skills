@@ -377,6 +377,22 @@ published on Zenodo under CC BY 4.0.
   `Soja` → `Soybeans`, `Girasol` → `Sunflower`, ...) so rotation summaries,
   stacked-bar charts, and strategy text work unchanged. The raw MNC code is
   retained in `crop_code`.
+- **`No agrícola` (summer 22 / winter 20) is not "Other".** It is the MNC
+  class for native/exotic perennial grasses, pastures and woody vegetation;
+  it maps to `Non-agricultural`. `Otros cultivos` (winter 17) maps to
+  `Other crops`. Folding pasture into `Other` (the old behaviour) made
+  grazing land look like an unidentified crop.
+- Output rows carry `crop_source='mnc'` and `season` plus two cropland
+  columns: `agricultural_share` (0-1, crop share of the selected campaign
+  raster) and `cropland_status` (`cropland` ≥ 50 %, `partial` 20-50 %,
+  `non_agricultural` < 20 %). EDA should exclude or flag `non_agricultural`
+  parcels rather than treating them as crop fields.
+- Rotation summaries respect the same distinction: a parcel whose dominant
+  class is non-crop in every year gets `rotation_confidence=not_applicable`
+  and `predicted_next_crop=Not applicable`; rotation is forecast from the
+  cropped years only, so interleaved fallow/pasture years do not enter the
+  sequence. `ar_crop_rotation.csv` adds `current_crop`, `cropland_years`,
+  `non_crop_years` and `non_agricultural_years`.
 - Output rows carry `crop_source='mnc'` and `season` in addition to the CDL
   schema.
 - Provenance is written to `derived/summaries/mnc_provenance.json`.

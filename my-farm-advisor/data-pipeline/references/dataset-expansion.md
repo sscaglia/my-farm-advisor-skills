@@ -99,12 +99,21 @@ unusable for field-scale EDA. `download_osm_fields.py --max-area-ha`
 ## Verification checklist
 
 - 4 growers × 10 fields; `field-inventory.csv` has 10 rows per farm.
+- Every `fields/<field>/field.json` has `field_id` equal to its lowercase
+  `field_slug` (never an uppercased scaffold id) and carries `state`, `country`,
+  `area_acres`/`area_ha` and `source` synced from the boundary. `county` is
+  present for US fields; AR boundaries publish none, so it is absent rather than
+  invented.
 - Pre-expansion `r1…r3` `csb_id` and geometry hashes unchanged.
 - Every US field carries `csb_id` and a `county` property; AR fields carry
   `osm_way_id` (new) or the gpkg source label (original three).
 - Weather table has 10 field IDs × 2021–2025 × 1 826 days.
 - `<farm>_<year>_cdl.csv` exists for 2021–2025 with 10 fields; rotation table
   has 10 rows.
+- AR CDL tables carry `agricultural_share` and `cropland_status`;
+  `derived/summaries/mnc_seasonal_detail.csv` keeps both seasons per campaign,
+  and `ar_crop_rotation.csv` carries `cropland_years` /
+  `non_agricultural_years` / `rotation_confidence`.
 - `shared/cdl/rasters/CDL_<year>_31.tif` present for Nebraska.
 - `derived/tables/field_fips_mapping.parquet` for the US farms.
 - Each grower's Field Atlas lists 10 fields.
