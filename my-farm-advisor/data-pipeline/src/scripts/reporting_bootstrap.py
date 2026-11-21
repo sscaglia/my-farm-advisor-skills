@@ -268,7 +268,7 @@ def ensure_canonical_field_artifacts(
 def ensure_canonical_data_tree(
     grower_slug: str = DEFAULT_GROWER,
     farm_slug: str = DEFAULT_FARM,
-    farm_name: str = DEFAULT_FARM_NAME,
+    farm_name: str | None = None,
     inventory_path: Path | None = None,
     include_farm: bool = True,
     country: str | None = None,
@@ -419,12 +419,19 @@ def ensure_canonical_data_tree(
     # reset them to the US/IA placeholder once a real farm has recorded them.
     resolved_country = (country or existing_metadata.get("country") or "US")
     resolved_state = state or existing_metadata.get("state") or "IA"
+    # Most pipeline legs call this helper without a farm name just to make sure
+    # the tree exists.  The module default must therefore not overwrite a name
+    # already recorded on disk, or every leg would rename the farm to
+    # "Default Farm".  An explicit farm_name still wins.
+    resolved_farm_name = (
+        farm_name or existing_metadata.get("display_name") or DEFAULT_FARM_NAME
+    )
     _write_json(
         farm_metadata_path,
         {
             "grower_slug": grower_slug,
             "farm_slug": farm_slug,
-            "display_name": farm_name or existing_metadata.get("display_name"),
+            "display_name": resolved_farm_name,
             "state": str(resolved_state).strip(),
             "country": str(resolved_country).strip().upper(),
             "default_crs": "EPSG:4326",

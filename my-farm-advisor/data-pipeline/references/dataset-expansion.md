@@ -123,3 +123,19 @@ property records the truth:
 
 Keeping the county bbox is what preserves `r1…r3`; the spill is the cost of
 that guarantee, and it is useful for cross-county weather comparison.
+
+## Farm display names survive later legs
+
+`run_farm_pipeline.py --farm-name` records the name in
+`manifests/pipeline_schedule.json` and `farm.json`, but the individual ingest
+and reporting legs call `ensure_canonical_data_tree(grower, farm)` without a
+farm name purely to guarantee the tree exists. Until 2026-11-21 that call
+applied the module default (`AG_FARM_NAME` / `"Default Farm"`) and overwrote
+the recorded `display_name` — the expansion run left all four farms named
+`Default Farm`. `reporting_bootstrap.ensure_canonical_data_tree` now treats an
+omitted name as "leave whatever is on disk", so only an explicit `farm_name`
+renames a farm. Farm HTML titles were unaffected throughout because they read
+the schedule, but the Field Atlas farm labels were not, so re-run
+`generate_grower_web_map.py` after any name repair.
+
+Regression guard: `src/scripts/tests/smoke_reporting_bootstrap_farm_name.py`.
