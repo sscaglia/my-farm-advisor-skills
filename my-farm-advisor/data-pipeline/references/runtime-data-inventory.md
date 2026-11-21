@@ -40,23 +40,23 @@ Measured footprint at snapshot time:
 
 | Tree | Size | Notes |
 |---|---:|---|
-| `shared/` | 6.3 GB | Dominated by CDL rasters (2.2 GB), DEM (2.1 GB) and Argentina MNC (1.5 GB) |
-| `growers/` | 1.3 GB | Three growers, one farm each, three fields each (9 fields total) |
+| `shared/` | 15 GB | Dominated by DEM (9.0 GB), CDL rasters (3.5 GB) and Argentina MNC (1.5 GB) |
+| `growers/` | 5.6 GB | Four growers, one farm each, ten fields each (40 fields total) |
 
 ### `shared/` directory sizes
 
 | Path | Files | Size | Content class |
 |---|---:|---:|---|
-| `shared/argentina` | 13 | 1.5 GB | Argentina MNC crop rasters + INTA soil extracts |
-| `shared/cdl` | 13 | 2.2 GB | USDA Cropland Data Layer state rasters |
+| `shared/argentina` | 20 | 1.5 GB | Argentina MNC crop rasters + INTA soil extracts |
+| `shared/cdl` | 18 | 3.5 GB | USDA Cropland Data Layer state rasters (FIPS 17, 19, 31) |
 | `shared/corn_maturity` | 34 | 8.2 MB | County GDD and corn relative-maturity tables |
-| `shared/dem` | 14 | 2.1 GB | NASADEM (AR) and USGS 3DEP (IA/IL) source DEM tiles |
+| `shared/dem` | 75 | 9.0 GB | NASADEM (AR), USGS 3DEP (IA/IL/NE) source DEM tiles |
 | `shared/geoadmin` | 14 | 498 MB | Country/state/county boundaries and FIPS lookup |
-| `shared/logs` | 0 | 4 KB | Empty placeholder |
+| `shared/logs` | 5 | 3.3 MB | Batch logs from the Assignment 2 expansion runs |
 | `shared/manifests` | 7 | 36 KB | Shared initialization + maturity manifests |
-| `shared/osm` | 1 | 12 KB | Field-source download journal (FIBOA/CSB) |
+| `shared/osm` | 1 | 12 KB | Field-source download journal (FIBOA/CSB, OSM) |
 | `shared/reference` | 0 | 16 KB | Empty `crop_codes`, `schemas`, `units` placeholders |
-| `shared/soilgrids` | 245 | 1.2 MB | Per-field SoilGrids rasters, stats table, hash journal |
+| `shared/soilgrids` | 1,082 | 4.9 MB | Per-field SoilGrids rasters, stats table, hash journal |
 | `shared/soybean_maturity` | 24 | 8.2 MB | County soybean maturity-group tables |
 | `shared/weather` | 10 | 103 MB | Lower-48 county daily weather parquet by year |
 
@@ -64,9 +64,33 @@ Measured footprint at snapshot time:
 
 | Grower | Files | Size | Farm | Fields |
 |---|---:|---:|---|---:|
-| `ar-grower` | 1,959 | 224 MB | `ar-farm` (Entre Ríos, AR) | 3 |
-| `ia-grower` | 1,725 | 522 MB | `ia-farm` (Kossuth County, IA) | 3 |
-| `il-grower` | 1,864 | 527 MB | `il-farm` (Iroquois County, IL) | 3 |
+| `ar-grower` | 6,543 | 684 MB | `ar-farm` (Entre Ríos, AR) | 10 |
+| `ia-grower` | 6,002 | 1.6 GB | `ia-farm` (Kossuth County, IA) | 10 |
+| `il-grower` | 6,260 | 1.9 GB | `il-farm` (Iroquois County, IL) | 10 |
+| `ne-grower` | 6,776 | 1.5 GB | `ne-farm` (Hamilton County, NE) | 10 |
+
+The per-grower file counts and sizes above are the post-expansion measurement;
+`default-grower` remains an empty scaffold and is excluded from the table.
+
+### Assignment 2 expansion (shape change only)
+
+Assignment 1 seeded three growers × three fields. Assignment 2 expanded each
+farm to ten fields and added `ne-grower`, without touching any Assignment 1
+polygon. Full recipe and verification checklist:
+[dataset-expansion.md](dataset-expansion.md).
+
+| Farm | Additions | Source | County spread |
+|---|---|---|---|
+| `il-farm` | `il-r4`–`il-r10` | CSB, same Iroquois bbox | 9 Iroquois, 1 Ford |
+| `ia-farm` | `ia-r4`–`ia-r10` | CSB, same Kossuth bbox | 9 Kossuth, 1 Humboldt |
+| `ar-farm` | `ar-o1`–`ar-o7` | OSM `landuse=farmland`, 20–150 ha window | Entre Ríos |
+| `ne-farm` | `ne-r1`–`ne-r10` | CSB, Hamilton County bbox | 8 Hamilton, 1 Merrick, 1 York |
+
+The CSB re-runs used the original bbox and prefix with `--max-fields 10`, which
+reproduces `r1`–`r3` byte-for-byte because ranking is deterministic
+(`-area, id`). The Argentine additions use the `ar-o` prefix so the three
+grower-supplied polygons and `field_import_provenance.json` survive alongside
+the new `osm_fields_provenance.json`.
 
 ## 2. What is in `shared/`
 
@@ -154,14 +178,16 @@ and access time. Grower pipelines clip these tiles into
 
 ### 2.6 `shared/soilgrids/` — 250 m soil grid floor
 
-- `soilgrids/<field>/soilgrids_<band>_<depth>.tif` for 9 fields.
+- `soilgrids/<field>/soilgrids_<band>_<depth>.tif` for every field (40 in the
+  current runtime).
 - 9 bands (`bdod, cec, cfvo, clay, nitrogen, phh2o, sand, silt, soc`) × 3 depths
-  (`0-5cm, 5-15cm, 15-30cm`) = 243 small rasters, plus 50 m field buffer.
-- `tables/soilgrids_field_stats.parquet` — 243 rows of per-field zonal statistics.
+  (`0-5cm, 5-15cm, 15-30cm`) = 27 small rasters per field, plus 50 m field buffer.
+- `tables/soilgrids_field_stats.parquet` — 1,080 rows (40 fields × 27 band/depth)
+  of per-field zonal statistics.
 - `manifests/sha256_journal.json` — per-raster SHA-256, band, depth, source URL,
   GDAL version, and access time.
 
-Used by all nine fields as a consistent grid-based soil floor and as cross-check
+Used by all fields as a consistent grid-based soil floor and as cross-check
 for survey soil. Scale factors/units live in each grower's
 `manifests/soilgrids_provenance.json`.
 
@@ -268,7 +294,7 @@ growers/
 ```
 
 At the top of `growers/`, `growers_field_map.json` records `generated_at`,
-`default_grower` (`il-grower`), 3 growers, 9 fields, and each grower's map path.
+`default_grower` (`il-grower`), 4 growers, 40 fields, and each grower's map path.
 The combined map is `growers/growers_field_map.html`; each grower also has a
 standalone `reports/<grower>_field_map.html`.
 
@@ -300,7 +326,7 @@ These geometries drive area, clipping, zonal statistics, and the Field Atlas map
 
 ### 5.3 Soil
 
-All three growers currently emit the same four filenames per field:
+All four growers currently emit the same four filenames per field:
 
 | File | Contents |
 |---|---|
@@ -354,7 +380,7 @@ elevation range, slope percentiles, ponding/erosion proxy areas, CRS, and
 conditioning status. `manifests/dem_terrain_manifest.json` records inputs,
 outputs, checksums, and quality warnings.
 
-Important caveat: all nine fields currently report
+Important caveat: the Assignment 1 fields report
 `conditioning_status: skipped_backend_unavailable` with no conditioning backend.
 Terrain products and previews still exist, but hydrology-derived layers are
 **advisory proxies, not engineered drainage design**. The JSON summary states
@@ -416,7 +442,7 @@ and step name, which is what makes incremental re-runs possible.
 
 ## 6. Grower profiles
 
-All three growers ran the same 16-step schedule to `complete`:
+All four growers ran the same 16-step schedule to `complete`:
 `download_fields → download_dem_terrain → download_soil → download_soilgrids →
 download_weather → download_cdl → download_satellite_imagery → NDVI composites →
 NDVI cards → SSURGO maps → field posters → aggregate poster → SSURGO cards →
@@ -517,20 +543,48 @@ Particularities:
   FIPS 17 rasters and Iroquois-specific soil/rotation values.
 - Farm HTML report is ~61 MB.
 
-### 6.4 Cross-grower comparison
+### 6.4 `ne-grower` — Hamilton County, Nebraska
 
-| Dimension | `ar-grower` | `ia-grower` | `il-grower` |
-|---|---|---|---|
-| Country / state | AR / Entre Ríos | US / Iowa | US / Illinois |
-| Total acres | 667.2 | 2,266.2 | 2,352.9 |
-| Boundary source | grower GPKG | USDA CSB (FIBOA) | USDA CSB (FIBOA) |
-| Boundary crop | `Unknown` (override in `field.json`) | populated | populated |
-| Crop history | INTA MNC | CDL FIPS 19 | CDL FIPS 17 |
-| Soil survey | INTA 1:100k | SSURGO | SSURGO |
-| Weather | per-field point | county grid | county grid |
-| Maturity guidance | Entre Ríos calendar | RM/MG tables | RM/MG tables |
-| DEM | NASADEM 30 m-class | 3DEP 1 m | 3DEP 1 m |
-| Field terrain | advisory proxies | advisory proxies | advisory proxies |
+| Item | Value |
+|---|---|
+| Farm | `ne-farm`, "Nebraska Farm", country `US`, state `Nebraska` |
+| Total area | 5,428.8 acres |
+| Fields | `ne-r1`–`ne-r10`, 185.8–237.7 ha each |
+| 2025 crops (boundary) | 8 Corn, 2 Soybeans |
+| County spread | 8 Hamilton (FIPS 31081), 1 Merrick, 1 York |
+| Crop history source | USDA CDL FIPS 31 (state rasters fetched on demand) |
+| Soil source | SSURGO / SDA |
+| DEM source | USGS TNM 3DEP |
+| Weather | county grid (lower-48 coverage already included FIPS 31) |
+
+Particularities:
+
+- **Center-pivot corn/soy county by design.** Hamilton County sits in the
+  Platte River pivot belt; the CSB extractor returns quarter-section-scale
+  irrigated fields rather than the larger eastern-Corn-Belt parcels.
+- **CSB filters on bbox overlap, not county containment**, so two fields spill
+  into Merrick and York. The boundary `county` property records the truth and
+  the FIPS join maps them to their actual counties.
+- **No new shared weather download was needed** — the lower-48 county parquet
+  already covered all 3,109 counties. Only the CDL state-31 rasters were new.
+- **Soil is SSURGO**, unlike Argentina; the three-county spread means the farm
+  soil summary mixes Platte-valley and uplap soil associations.
+
+### 6.5 Cross-grower comparison
+
+| Dimension | `ar-grower` | `ia-grower` | `il-grower` | `ne-grower` |
+|---|---|---|---|---|
+| Country / state | AR / Entre Ríos | US / Iowa | US / Illinois | US / Nebraska |
+| Fields | 10 | 10 | 10 | 10 |
+| Total acres | 667.2 (3 gpkg) + 7 OSM | 2,266.2 (3) + 7 CSB | 2,352.9 (3) + 7 CSB | 5,428.8 (10 CSB) |
+| Boundary source | grower GPKG + OSM | USDA CSB (FIBOA) | USDA CSB (FIBOA) | USDA CSB (FIBOA) |
+| Boundary crop | `Unknown` / OSM tag | populated | populated | populated |
+| Crop history | INTA MNC | CDL FIPS 19 | CDL FIPS 17 | CDL FIPS 31 |
+| Soil survey | INTA 1:100k | SSURGO | SSURGO | SSURGO |
+| Weather | per-field point | county grid | county grid | county grid |
+| Maturity guidance | Entre Ríos calendar | RM/MG tables | RM/MG tables | RM/MG tables |
+| DEM | NASADEM 30 m-class | 3DEP 1 m | 3DEP 1 m | 3DEP 1 m |
+| Field terrain | advisory proxies | advisory proxies | advisory proxies | advisory proxies |
 
 ## 7. Particularities and caveats to carry forward
 
@@ -560,7 +614,7 @@ Particularities:
    crop codes (10= corn, 11= soybeans, 22= other) appear in outputs.
 10. **Shared DEM can be shared per field group.** All AR fields point at one
     NASADEM tile; US fields may need one or two 3DEP tiles. Storage cost is
-    concentrated on the US side (2.1 GB).
+    concentrated on the US side (9.0 GB after the 20 US fields at 1 m).
 11. **Report HTML files are large** (~61–142 MB) because imagery is embedded;
     they are runtime artifacts, not Git content.
 12. **Empty `derived/dashboards/` and empty per-farm/per-field
@@ -568,7 +622,8 @@ Particularities:
     primarily in `manifests/pipeline_schedule.json`.
 13. **Field Atlas is a separate product** from the farm reports:
     `growers/growers_field_map.html` + `.json` plus per-grower
-    `reports/<grower>_field_map.html`, generated 2026-11-09, default grower
+    `reports/<grower>_field_map.html`, regenerated after the Assignment 2
+    expansion (4 growers, 40 fields), default grower
     `il-grower`.
 
 ## 8. Where each shared asset enters the pipeline

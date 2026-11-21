@@ -11,6 +11,9 @@ keyless WorldCereal default-model path for every other country):
 The best-available-data ladder and the keyless RDM regional-reference API
 (`scripts/ingest/download_rdm_reference.py`):
 [references/worldcereal-rdm.md](references/worldcereal-rdm.md).
+Multi-grower demo dataset assembly (four growers × ten fields, non-destructive
+field IDs, OSM estate-polygon guard):
+[references/dataset-expansion.md](references/dataset-expansion.md).
 - Field-scale maps (any figure drawing one field polygon) use the field-local
   UTM frame, origin-at-SW-corner axes and boxed north arrow, with optional
   viewport rotation — [references/field-map-frame.md](references/field-map-frame.md).

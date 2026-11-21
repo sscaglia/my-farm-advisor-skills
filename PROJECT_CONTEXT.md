@@ -832,16 +832,19 @@ Provenance JSON examples include `csb_fields_provenance.json`:
 
 ### 6.10 Per-grower particularities (runtime snapshot)
 
-The inspected runtime contains three growers and nine fields:
+The inspected runtime contains four growers and forty fields. Assignment 1
+seeded three growers × three fields; Assignment 2 expanded each farm to ten
+fields and added `ne-grower` without changing any Assignment 1 polygon.
 
 | Grower | Farm | Fields | Area | Particularities |
 | --- | --- | --- | --- | --- |
-| `ar-grower` | `ar-farm` | `ar-r1`, `ar-r2`, `ar-r3` | 667.2 ac | INTA soil + MNC crop history; `ssurgo_*` filenames despite INTA source; boundary crop `Unknown` corrected via `field.json`; point weather; reused NASADEM tile |
-| `ia-grower` | `ia-farm` | `ia-r1`, `ia-r2`, `ia-r3` | 2,266.2 ac | US SSURGO/CDL/NASA POWER; county FIPS assignment |
-| `il-grower` | `il-farm` | `il-r1`, `il-r2`, `il-r3` | 2,352.9 ac | US SSURGO/CDL/NASA POWER; default combined Field Atlas grower |
+| `ar-grower` | `ar-farm` | `ar-r1`–`ar-r3` (gpkg), `ar-o1`–`ar-o7` (OSM) | 667.2 ac + 7 OSM lots | INTA soil + MNC crop history; `ssurgo_*` filenames despite INTA source; boundary crop `Unknown` corrected via `field.json`; point weather; reused NASADEM tile; dual `field_import`/`osm_fields` provenance |
+| `ia-grower` | `ia-farm` | `ia-r1`–`ia-r10` | 2,266.2 ac (r1–r3) | US SSURGO/CDL/NASA POWER; county FIPS assignment |
+| `il-grower` | `il-farm` | `il-r1`–`il-r10` | 2,352.9 ac (r1–r3) | US SSURGO/CDL/NASA POWER; default combined Field Atlas grower |
+| `ne-grower` | `ne-farm` | `ne-r1`–`ne-r10` | 5,428.8 ac | Hamilton County center-pivot corn/soy; CDL FIPS 31; SSURGO; 3DEP; spills into Merrick and York |
 
-Runtime sizes at snapshot: `shared/` ~6.3 GB, `growers/` ~1.3 GB. See the
-inventory reference for the full breakdown.
+Runtime sizes after the Assignment 2 expansion: `shared/` ~15 GB, `growers/`
+~5.6 GB. See the inventory reference for the full breakdown.
 
 ---
 

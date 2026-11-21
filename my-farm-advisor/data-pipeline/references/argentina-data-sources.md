@@ -190,9 +190,16 @@ print({key: value["status"] for key, value in cards.items()})
 PY
 ```
 
-Expected grower/farm/field shape: 3 growers × 1 farm × 3 fields = 9 fields.
-Every `ar-*` NDVI card should report `available` with `crop_mask_source`
-`MNC summer` on the peak cards.
+Expected grower/farm/field shape after the Assignment 2 expansion:
+4 growers × 1 farm × 10 fields = 40 fields. Every `ar-*` NDVI card should
+report `available` with `crop_mask_source` `MNC summer` on the peak cards.
+
+The Assignment 1 shape was 3 growers × 1 farm × 3 fields = 9 fields; the
+seven `ar-o1…ar-o7` additions come from OSM rather than a GeoPackage, so the
+farm carries both `field_import_provenance.json` and
+`osm_fields_provenance.json`. See
+[dataset-expansion.md](dataset-expansion.md) for the full four-grower recipe
+and its `--max-area-ha` estate-polygon guard.
 
 ## Data licences
 
