@@ -29,7 +29,7 @@ If a task needs Superior Byteworks behavior, update dependency notes or referenc
 
 ## Asset and generated output policy
 
-Do not commit generated or downloaded runtime assets. Do not track `data/`, `.cache/`, build artifacts, `node_modules/`, generated example `output/` folders, or runtime geoadmin payloads.
+Do not commit generated or downloaded runtime assets. Do not track `data/`, `.cache/`, build artifacts, `node_modules/`, or runtime geoadmin payloads. The one exception is small, deterministic demonstration fixtures under `examples/**/output/`, as defined in `ASSET_POLICY.md`.
 
 Runtime geoadmin payload examples include `countries.geojson`, `states_usa.geojson`, and county GeoJSON outputs under `data/my-farm-advisor/shared/geoadmin/`.
 

@@ -43,11 +43,14 @@ Open the subtree index that matches the request:
 - Use **Field Management** for boundaries, deterministic field sampling, or headlands.
 - Use **Imagery** for Landsat or Sentinel-2 scene acquisition and vegetation products.
 - Use **Soil** for soil/crop-layer data with country-aware routing: US → SSURGO/gNATSGO, Canada →
-  Ontario DSS ladder, Australia → SLGA/ASF grids + ANSIS sites, anywhere else → SoilGrids 250 m floor
+  Ontario DSS ladder, Australia → SLGA/ASF grids + ANSIS sites, Argentina (Entre Ríos) → INTA
+  1:100,000 survey, anywhere else → SoilGrids 250 m floor
   (decision table in `soil/soil-routing.md`; verified endpoints in
   [references/non-us-soil-sources.md](references/non-us-soil-sources.md)). No silent cross-border fills.
 - Use **Terrain** for DEM source policy, elevation provenance, and terrain derivatives.
 - Use **EDA** for exploration, comparisons, correlations, visualization, and time series.
+  For a runnable field-level comparison across growers (boundaries, CDL/MNC rotation,
+  weather series), open `eda/eda-field-comparison/README.md`.
 - Use **Data Sources** for canonical data rebuilds and farm-level intelligence reporting.
 - Use **Strategy** for maturity planning and crop-strategy decisions.
 - Use **Weather** for NASA POWER weather acquisition and downstream farm weather analysis.

@@ -424,13 +424,27 @@ def compute_management_implications(field_row: pd.Series | dict) -> list[str]:
                 f"Clay content {clay:.0f}% is high; monitor compaction risk and spring trafficability"
             )
 
-    diversity = row.get("crop_diversity")
-    if diversity is not None and not np.isnan(float(diversity)):
-        diversity = int(diversity)
-        if diversity <= _CDL_LOW_DIVERSITY:
-            implications.append(
-                "Crop history shows low rotation diversity; consider diversifying for disease and weed pressure management"
-            )
+    rotation_confidence = str(row.get("rotation_confidence") or "").strip().lower()
+    try:
+        cropland_years = float(row.get("cropland_years"))
+    except (TypeError, ValueError):
+        cropland_years = None
+    non_cropland = rotation_confidence == "not_applicable" or (
+        cropland_years is not None and cropland_years <= 0
+    )
+    if non_cropland:
+        implications.append(
+            "No managed crop in the crop-history window; this parcel reads as pasture or "
+            "non-agricultural land, so crop-rotation advice is not applicable"
+        )
+    else:
+        diversity = row.get("crop_diversity")
+        if diversity is not None and not np.isnan(float(diversity)):
+            diversity = int(diversity)
+            if diversity <= _CDL_LOW_DIVERSITY:
+                implications.append(
+                    "Crop history shows low rotation diversity; consider diversifying for disease and weed pressure management"
+                )
 
     erosion = row.get("erosion_risk")
     if isinstance(erosion, str) and "high" in erosion.lower():

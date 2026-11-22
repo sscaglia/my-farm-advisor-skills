@@ -12,6 +12,7 @@ back to US when absent (historic default). Every soil artifact carries a
 | `US` | SSURGO via NRCS SDA (`ssurgo-soil`) | mapped soil polygons + profile/lab tables | gNATSGO (parallel never fill; tested/method flags honored) → SoilGrids |
 | `CA` | Ontario Detailed Soil Survey (`ontario-soil-survey`) | SSURGO analog, ON only (30-report scope, tested/method flags) | SoilGrids global grid |
 | `AU` | SLGA/ASF national soil attribute grids (`australia-soil`), streamed **keyless** via the CSIRO DAP public mirror | wall-to-wall property rasters (~1 km), CC-BY, DOIs pinned | ANSIS site index (profile/site records, ASRIS successor); SoilGrids global grid |
+| `AR` | INTA Cartas de Suelos de Entre Ríos 1:100,000 (`argentina-soil`) | SSURGO analog: map units + series analytical profiles | SoilGrids global grid |
 | any other country | **SoilGrids 250 m** (`soilgrids-global`) | global property grid, 9+ bands × depth slabs | — (this is the floor) |
 
 ## Hard rules
@@ -32,6 +33,14 @@ back to US when absent (historic default). Every soil artifact carries a
 - `download_soilgrids.py` is safe to run everywhere: it keys off the field
   bbox, clips only the tiles it needs from the public ISRIC VRTs, and is
   idempotent via the shared/soilgrids manifest journal.
+- **Argentina is Entre Ríos only.** The INTA 1:100,000 survey currently
+  covers Entre Ríos; fields outside that province get no national rows and
+  fall through to SoilGrids. `soil_source=inta_entre_rios_100k` marks every
+  provider row, and `mukey` is namespaced `AR-ER-<fid>` so it cannot collide
+  with a USDA MUKEY.
+- **Hemisphere-aware UTM.** Field area, headlands, and poster extents are
+  projected with `lib/projection.utm_epsg` (`EPSG:326xx` north,
+  `EPSG:327xx` south), never a hard-coded northern zone.
 
 ## Boundary property contract
 

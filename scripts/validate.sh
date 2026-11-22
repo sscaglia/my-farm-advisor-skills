@@ -434,6 +434,10 @@ for markdown_file in markdown_files:
             except UnicodeDecodeError:
                 continue
             fragment = unquote(split_target.fragment).lower()
+            # Heading slugs are compared with repeated hyphens collapsed so
+            # both GitHub-style ("database--data-models") and simplified
+            # ("database-data-models") anchors resolve.
+            fragment = re.sub(r'-+', '-', fragment)
             if fragment not in heading_slugs(target_text):
                 missing.append(f'{markdown_file}: {target} -> missing heading #{split_target.fragment}')
 

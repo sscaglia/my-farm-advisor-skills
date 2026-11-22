@@ -24,6 +24,21 @@ CDL_CODES = {
     176: "Grass/Pasture",
 }
 
+# Labels that mean "no managed crop this year".  These stay in the composition
+# table (so pasture share is visible) but must never be read as a rotation.
+# ``Other`` (CDL 63) and ``Other crops`` (MNC) are intentionally absent: they
+# are catch-all *crop* classes, not non-crop land.
+NON_CROP_LABELS: frozenset[str] = frozenset(
+    {
+        "Non-agricultural",
+        "Fallow/Idle",
+        "Forest",
+        "Grassland",
+        "Grass/Pasture",
+        "Open Water",
+    }
+)
+
 
 def filter_cdl_categories(crop_mix: pd.DataFrame) -> pd.DataFrame:
     if crop_mix.empty:
@@ -77,10 +92,28 @@ def build_crop_rotation_outlook(crop_names: list[str]) -> dict[str, str]:
             "rotation_outlook": "Insufficient crop history for a heuristic rotation outlook.",
         }
 
-    current_crop = crop_names[-1]
-    next_crop, next_confidence = _predict_next_crop(crop_names, current_crop)
+    # A parcel that is pasture/non-agricultural in every observed year has no
+    # rotation to describe.  Predicting "Non-agricultural -> Non-agricultural"
+    # with high confidence is meaningless, so say so explicitly.
+    cropped_years = [name for name in crop_names if name not in NON_CROP_LABELS]
+    if not cropped_years:
+        return {
+            "predicted_next_crop": "Not applicable",
+            "predicted_following_crop": "Not applicable",
+            "rotation_confidence": "not_applicable",
+            "rotation_outlook": (
+                "No managed crop in the observed years; the parcel reads as "
+                "pasture, fallow or non-agricultural land, so a crop rotation "
+                "outlook does not apply."
+            ),
+        }
+
+    # Forecast from the cropped years only; interleaved fallow/pasture years
+    # should not be treated as a crop in the rotation sequence.
+    current_crop = cropped_years[-1]
+    next_crop, next_confidence = _predict_next_crop(cropped_years, current_crop)
     following_crop, following_confidence = _predict_next_crop(
-        crop_names + ([next_crop] if next_crop else []), next_crop or current_crop
+        cropped_years + ([next_crop] if next_crop else []), next_crop or current_crop
     )
     confidence_rank = {"none": 0, "low": 1, "medium": 2, "high": 3}
     combined_confidence = min(
@@ -169,6 +202,7 @@ def summarize_crop_history(crop_mix: pd.DataFrame, window_years: int = 5) -> pd.
         crop_names = ordered["crop_name"].tolist()
         transitions = [f"{crop_names[i]} → {crop_names[i + 1]}" for i in range(len(crop_names) - 1)]
         outlook = build_crop_rotation_outlook(crop_names)
+        non_crop_years = int(sum(name in NON_CROP_LABELS for name in crop_names))
         sequences.append(
             {
                 "field_id": field_id,
@@ -179,6 +213,12 @@ def summarize_crop_history(crop_mix: pd.DataFrame, window_years: int = 5) -> pd.
                 "history_start_year": int(ordered["year"].min()),
                 "history_end_year": int(ordered["year"].max()),
                 "crop_diversity": int(ordered["crop_name"].nunique()),
+                "current_crop": crop_names[-1] if crop_names else "Unknown",
+                "cropland_years": int(len(crop_names) - non_crop_years),
+                "non_crop_years": non_crop_years,
+                "non_agricultural_years": int(
+                    sum(name == "Non-agricultural" for name in crop_names)
+                ),
                 "corn_years": int((ordered["crop_name"] == "Corn").sum()),
                 "soybean_years": int((ordered["crop_name"] == "Soybeans").sum()),
                 **outlook,

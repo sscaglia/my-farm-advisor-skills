@@ -11,6 +11,12 @@ keyless WorldCereal default-model path for every other country):
 The best-available-data ladder and the keyless RDM regional-reference API
 (`scripts/ingest/download_rdm_reference.py`):
 [references/worldcereal-rdm.md](references/worldcereal-rdm.md).
+Multi-grower demo dataset assembly (four growers × ten fields, non-destructive
+field IDs, OSM estate-polygon guard):
+[references/dataset-expansion.md](references/dataset-expansion.md).
+Field-level comparison EDA across growers (boundaries, CDL/MNC rotation, weather
+series → 9 figures / 12 tables / manifest):
+[../eda/eda-field-comparison/README.md](../eda/eda-field-comparison/README.md).
 - Field-scale maps (any figure drawing one field polygon) use the field-local
   UTM frame, origin-at-SW-corner axes and boxed north arrow, with optional
   viewport rotation — [references/field-map-frame.md](references/field-map-frame.md).
@@ -23,6 +29,31 @@ subfolder per output family (`field-maps/`, `soil-maps/`, `maturity/`,
 `field-components/`, `weather-eda/`, `worldcereal/`). PNGs only; regenerated
 runtime artifacts stay outside the repo under `DATA_PIPELINE_DATA_ROOT`
 (see `ASSET_POLICY.md` at the repo root).
+
+
+## Grower web maps
+
+Generate standalone Field Atlas maps from the runtime field boundaries — one
+HTML map per grower plus an optional combined map that switches between growers
+and fields:
+
+```bash
+export DATA_PIPELINE_DATA_ROOT=/absolute/path/to/my-farm-advisor-runtime
+cd "${DATA_PIPELINE_DATA_ROOT}/data-pipeline/src"
+"${DATA_PIPELINE_DATA_ROOT}/data-pipeline/.venv/bin/python" \
+  scripts/reporting/generate_grower_web_map.py --all-growers --combined
+```
+
+Outputs stay under `${DATA_PIPELINE_DATA_ROOT}/data-pipeline/growers/`:
+
+- `growers/<grower>/reports/<grower>_field_map.html`
+- `growers/growers_field_map.html`
+- `growers/growers_field_map.json`
+
+The maps use Esri World Imagery with a streets toggle, embed only slim field
+geometry, and support grower/field hash links. See
+[`grower-web-map/README.md`](grower-web-map/README.md) and
+[`grower-web-map/GUIDE.md`](grower-web-map/GUIDE.md).
 
 
 ## Global parity in one paragraph

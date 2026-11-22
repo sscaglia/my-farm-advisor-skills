@@ -28,6 +28,12 @@ with **no API keys, logins, or paid services anywhere in the default path**:
 | Admin boundaries / choropleth | geoadmin L1/L2 + combined FIPS | GADM L1/L2 (PRUID-enriched) | `--gadm-iso AUS` (live-verified: 568 LGA units) | `--gadm-iso <ISO3>` — any country; L0 worldwide already |
 | Corn RM / Soybean MG (**derived**) | Heuristic FIPS models computed in-house from our own POWER weather — annual `rm_by_fips_YYYY` + 5-year averages | provincial analog | season calendar | season calendar |
 
+Argentina is a first-class non-US route: Entre Ríos fields use the INTA
+1:100,000 soil survey and the INTA National Map of Crops (MNC, 30 m,
+2020/21→) instead of the generic WorldCereal/SoilGrids fallback. See
+[`soil/argentina-soil/README.md`](soil/argentina-soil/README.md) and the
+[Argentina runbook](data-pipeline/references/argentina-data-sources.md).
+
 Maturity maps are **models, not licensed data**. No open authoritative
 source exists for corn RM or soybean MG — each seed company publishes its own
 proprietary version — so we generate ours from literature-based heat-unit and
@@ -280,6 +286,15 @@ The umbrella entrypoint is [`SKILL.md`](SKILL.md). From there, the skill routes 
 | Terrain          | DEM source policy, elevation provenance, and terrain derivatives       | [`terrain/INDEX.md`](terrain/INDEX.md)                   |
 | Strategy         | Crop strategy and maturity planning workflows                          | [`strategy/INDEX.md`](strategy/INDEX.md)                 |
 | Weather          | NASA POWER weather ingestion and downstream weather analysis           | [`weather/INDEX.md`](weather/INDEX.md)                   |
+
+The EDA area carries one runnable, code-backed subskill: **Field-Comparison EDA**
+([`eda/eda-field-comparison/`](eda/eda-field-comparison/)). It compares field boundaries,
+CDL/MNC crop history, and daily weather across growers at field, field-year, and grower
+level, and writes static artifacts only — nine PNG figures, twelve CSV tables, and a
+`manifest.json` — to
+`${DATA_PIPELINE_DATA_ROOT}/data-pipeline/eda/field-comparison/`. The one-time Assignment 2
+write-up assembled from those artifacts is
+[`eda/field-comparison-report.html`](eda/field-comparison-report.html).
 
 ## Typical Workflow
 

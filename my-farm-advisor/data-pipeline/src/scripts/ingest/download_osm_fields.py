@@ -1,9 +1,14 @@
 """Ingest real farm-field boundaries from OpenStreetMap (Overpass API).
 
-Queries OSM `landuse=farmland` polygons over a bbox, keeps closed ways of at
-least --min-area-ha, and writes them as per-field boundary GeoJSON + inventory
-rows for a farm — giving verified, real-world field polygons in any country
-where OSM mapping is dense (strong in AU/EU, patchy in parts of US/CA).
+Queries OSM `landuse=farmland` polygons over a bbox, keeps closed ways within
+the --min-area-ha/--max-area-ha window, and writes them as per-field boundary
+GeoJSON + inventory rows for a farm — giving verified, real-world field
+polygons in any country where OSM mapping is dense (strong in AU/EU, patchy in
+parts of US/CA).
+
+The optional --max-area-ha guard exists because rural OSM frequently maps a
+whole estate or property as one `landuse=farmland` way. Without an upper bound
+the largest-polygon ranking returns 10 000 ha parcels that are not fields.
 
 OSM data © OpenStreetMap contributors, ODbL 1.0. Requests are pinned:
 the exact Overpass QL and the responding instance are journalled per run,
@@ -12,7 +17,7 @@ with the raw response sha256, so an identical bbox query replays byte-for-byte.
 Usage:
   export DATA_PIPELINE_DATA_ROOT=... AG_GROWER_SLUG=... AG_FARM_SLUG=...
   python download_osm_fields.py --bbox S W N E --min-area-ha 20 \
-      --field-prefix au-r --limit 3 [--country AU]
+      --max-area-ha 150 --field-prefix au-r --max-fields 3 [--country AU]
 
 Notes:
   * Public instances rotate on 502/429 ("at capacity") with backoff.
@@ -99,6 +104,15 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Ingest real farm-field boundaries from OpenStreetMap (Overpass).")
     ap.add_argument("--bbox", type=float, nargs=4, metavar=("S", "W", "N", "E"))
     ap.add_argument("--min-area-ha", type=float, default=10.0)
+    ap.add_argument(
+        "--max-area-ha",
+        type=float,
+        default=None,
+        help=(
+            "Optional upper bound in hectares. Rejects whole-estate "
+            "landuse=farmland ways so ranking returns field-scale parcels."
+        ),
+    )
     ap.add_argument("--max-fields", type=int, default=5)
     ap.add_argument("--field-prefix", required=True, help="field_id prefix, e.g. au-r")
     ap.add_argument("--state", default="", help="state/province written to boundary properties")
@@ -134,6 +148,8 @@ def main(argv: list[str] | None = None) -> int:
         ha = _polygon_ha(ring)
         if ha < args.min_area_ha:
             continue
+        if args.max_area_ha is not None and ha > args.max_area_ha:
+            continue
         coords = [[p["lon"], p["lat"]] for p in ring]
         try:
             poly = Polygon(coords)
@@ -155,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     rows.sort(key=lambda r: (-r["ha"], r["way_id"]))
     rows = rows[: args.max_fields]
     if not rows:
-        print("no farmland polygons above --min-area-ha in this bbox")
+        print("no farmland polygons inside the requested area window in this bbox")
         return 1
 
     now = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
@@ -213,6 +229,7 @@ def main(argv: list[str] | None = None) -> int:
         "bbox": args.bbox,
         "instance": instance,
         "min_area_ha": args.min_area_ha,
+        "max_area_ha": args.max_area_ha,
         "response_sha256": hashlib.sha256(raw).hexdigest(),
         "accessed_at": now,
         "fields": [f["field_id"] for f in fields],

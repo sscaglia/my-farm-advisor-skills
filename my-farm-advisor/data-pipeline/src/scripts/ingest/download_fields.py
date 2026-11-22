@@ -18,6 +18,7 @@ def _load_bootstrap_helpers():
         ensure_canonical_data_tree,
         ensure_skill_path,
         field_slug_map_from_inventory,
+        sync_field_metadata_from_boundary,
     )
 
     ensure_skill_path("field-boundaries")
@@ -29,6 +30,7 @@ def _load_bootstrap_helpers():
         field_boundary_path,
         ensure_canonical_data_tree,
         field_slug_map_from_inventory,
+        sync_field_metadata_from_boundary,
         download_fields,
     )
 
@@ -40,6 +42,7 @@ def main():
         field_boundary_path,
         ensure_canonical_data_tree,
         field_slug_map_from_inventory,
+        sync_field_metadata_from_boundary,
         download_fields,
     ) = _load_bootstrap_helpers()
 
@@ -98,6 +101,15 @@ def main():
             target = field_boundary_path(grower_slug, farm_slug, field_slug)
             target.parent.mkdir(parents=True, exist_ok=True)
             single.to_file(target, driver="GeoJSON")
+
+    synced = sync_field_metadata_from_boundary(
+        grower_slug=grower_slug,
+        farm_slug=farm_slug,
+        boundary_path=canonical_output,
+        inventory_path=inventory_path if inventory_path.exists() else None,
+    )
+    if synced:
+        print(f"  field.json metadata synced from boundary: {len(synced)} fields")
 
     print(f"\n✓ Downloaded {len(fields)} fields")
     print(f"  Total area: {fields['area_acres'].sum():.1f} acres")

@@ -55,6 +55,7 @@ from pipeline import (
     load_manifest,
     step_is_stale,
 )
+from projection import utm_crs_for_geometry
 from reporting import build_farm_reporting_dataset, build_field_reporting_dataset
 from weather_reporting import (
     plot_gdd_doy_overlay,
@@ -74,7 +75,7 @@ _FIELD_INVENTORY = Path(os.environ.get("AG_INVENTORY_CSV", str(_DEFAULT_INVENTOR
 
 
 def _utm(frow) -> str:
-    return "EPSG:32615" if frow.geometry.centroid.x < -90 else "EPSG:32616"
+    return utm_crs_for_geometry(frow.geometry)
 
 
 def _ranking_bars(ax, field_df, metric_col, title):
