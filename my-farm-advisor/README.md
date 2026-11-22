@@ -287,6 +287,15 @@ The umbrella entrypoint is [`SKILL.md`](SKILL.md). From there, the skill routes 
 | Strategy         | Crop strategy and maturity planning workflows                          | [`strategy/INDEX.md`](strategy/INDEX.md)                 |
 | Weather          | NASA POWER weather ingestion and downstream weather analysis           | [`weather/INDEX.md`](weather/INDEX.md)                   |
 
+The EDA area carries one runnable, code-backed subskill: **Field-Comparison EDA**
+([`eda/eda-field-comparison/`](eda/eda-field-comparison/)). It compares field boundaries,
+CDL/MNC crop history, and daily weather across growers at field, field-year, and grower
+level, and writes static artifacts only — nine PNG figures, twelve CSV tables, and a
+`manifest.json` — to
+`${DATA_PIPELINE_DATA_ROOT}/data-pipeline/eda/field-comparison/`. The one-time Assignment 2
+write-up assembled from those artifacts is
+[`eda/field-comparison-report.html`](eda/field-comparison-report.html).
+
 ## Typical Workflow
 
 ```mermaid

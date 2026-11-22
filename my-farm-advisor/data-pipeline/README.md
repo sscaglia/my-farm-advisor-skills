@@ -14,6 +14,9 @@ The best-available-data ladder and the keyless RDM regional-reference API
 Multi-grower demo dataset assembly (four growers × ten fields, non-destructive
 field IDs, OSM estate-polygon guard):
 [references/dataset-expansion.md](references/dataset-expansion.md).
+Field-level comparison EDA across growers (boundaries, CDL/MNC rotation, weather
+series → 9 figures / 12 tables / manifest):
+[../eda/eda-field-comparison/README.md](../eda/eda-field-comparison/README.md).
 - Field-scale maps (any figure drawing one field polygon) use the field-local
   UTM frame, origin-at-SW-corner axes and boxed north arrow, with optional
   viewport rotation — [references/field-map-frame.md](references/field-map-frame.md).
